@@ -35,13 +35,13 @@ actual fun IPCAnonymousPipe.Companion.create(): IPCAnonymousPipe = memScoped {
 }
 
 data class UnixIPCPipe(val sendFD: ULong, val receiveFD: ULong) : IPCAnonymousPipe {
-    override val sink: IPCAnonymousPipeSink = fromSink(sendFD)
-    override val source: IPCAnonymousPipeSource = fromSource(receiveFD)
+    override val sink: IPCAnonymousPipeSink = IPCAnonymousPipe.fromSink(sendFD)
+    override val source: IPCAnonymousPipeSource = IPCAnonymousPipe.fromSource(receiveFD)
 }
 
-actual fun IPCAnonymousPipe.fromSource(fd: ULong): IPCAnonymousPipeSource = UnixPipeSource(fd)
+actual fun IPCAnonymousPipe.Companion.fromSource(fd: ULong): IPCAnonymousPipeSource = UnixPipeSource(fd)
 
-actual fun IPCAnonymousPipe.fromSink(fd: ULong): IPCAnonymousPipeSink = UnixPipeSink(fd)
+actual fun IPCAnonymousPipe.Companion.fromSink(fd: ULong): IPCAnonymousPipeSink = UnixPipeSink(fd)
 
 private class UnixPipeSource(
     override val fd: ULong,

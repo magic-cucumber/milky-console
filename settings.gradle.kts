@@ -31,6 +31,7 @@ dependencyResolutionManagement {
 include(":core")
 
 include(":plugin:loader")
+include(":plugin:protocol")
 
 include(":utils:pipe")
 include(":utils:dlloader")

@@ -1,35 +1,119 @@
-import com.github.ajalt.clikt.core.CliktCommand
-import com.github.ajalt.clikt.core.main
+import com.github.ajalt.clikt.command.SuspendingCliktCommand
+import com.github.ajalt.clikt.command.main
 import com.github.ajalt.clikt.parameters.options.option
 import com.github.ajalt.clikt.parameters.options.required
-import com.github.ajalt.clikt.parameters.options.validate
 import com.github.ajalt.clikt.parameters.types.ulong
-import kotlinx.atomicfu.locks.reentrantLock
 import kotlinx.cinterop.ByteVar
 import kotlinx.cinterop.CPointer
 import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.coroutines.Job
-import okio.buffer
+import kotlinx.cinterop.addressOf
+import kotlinx.cinterop.invoke
+import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.IO
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.newSingleThreadContext
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.ExperimentalSerializationApi
+import top.kagg886.milky.console.loader.LoaderApplication
+import top.kagg886.milky.console.protocol.HandShakePacket
+import top.kagg886.milky.console.protocol.HandShakePacketResponsePacket
+import top.kagg886.milky.console.protocol.HandShakeRequestReadyPacket
+import top.kagg886.milky.console.util.readContent
+import top.kagg886.milky.console.util.toBuffer
+import top.kagg886.milky.console.util.protocol.Packet
 import top.kagg886.saltify.console.util.dlloader.DLLoader
-import top.kagg886.saltify.console.util.pipe.Pipe
+import top.kagg886.saltify.console.util.pipe.IPCAnonymousPipe
+import top.kagg886.saltify.console.util.pipe.fromSink
+import top.kagg886.saltify.console.util.pipe.fromSource
 
-/**
- * ================================================
- * Author:     886kagg
- * Created on: 2026/7/13 22:04
- * ================================================
- */
+private const val ON_LOAD_SYMBOL = "milky_console_load_plugin_onload"
+private const val ON_UNLOAD_SYMBOL = "milky_console_load_plugin_onunload"
+private const val ON_MESSAGE_SYMBOL = "milky_console_load_plugin_onmessage"
 
-fun main(args: Array<String>) = LoaderCommand().main(args)
-class LoaderCommand : CliktCommand() {
+@OptIn(DelicateCoroutinesApi::class, ExperimentalCoroutinesApi::class)
+fun main(args: Array<String>) {
+    val dispatcher = newSingleThreadContext("Application")
+    runBlocking(dispatcher) {
+        LoaderCommand().main(args)
+    }
+    dispatcher.close()
+}
+
+class LoaderCommand : SuspendingCliktCommand() {
     private val fdSendable by option("--fd-sendable").ulong().required()
     private val fdReceivable by option("--fd-receivable").ulong().required()
     private val dynamicLibraryPath by option("--dynamic-library-path").required()
 
-    @OptIn(ExperimentalForeignApi::class)
-    override fun run() {
-        val sendPipe = Pipe.fromSendablePipe(fdSendable)
-        val receivePipe = Pipe.fromReceivablePipe(fdReceivable)
-        val dlLoader = DLLoader(dynamicLibraryPath)
+    @OptIn(ExperimentalForeignApi::class, ExperimentalSerializationApi::class)
+    override suspend fun run() {
+        val dynamicLibrary = DLLoader(dynamicLibraryPath)
+
+        val onLoad = dynamicLibrary.findSymbol<(Int) -> Boolean>(ON_LOAD_SYMBOL)
+        val onUnload = dynamicLibrary.findSymbol<() -> Int>(ON_UNLOAD_SYMBOL)
+        val onMessage = dynamicLibrary.findSymbol<(CPointer<ByteVar>?) -> Unit>(ON_MESSAGE_SYMBOL)
+
+        var unloadInvoked = false
+        try {
+            val source = IPCAnonymousPipe.fromSource(fdSendable)
+            val sink = IPCAnonymousPipe.fromSink(fdReceivable)
+            LoaderApplication.initialize(source, sink)
+
+            coroutineScope {
+                val incoming = Channel<Packet>(Channel.UNLIMITED)
+                // One uninterrupted subscription prevents packets from being lost
+                // while switching from handshake handling to message dispatch.
+                val subscription = launch(start = CoroutineStart.UNDISPATCHED) {
+                    LoaderApplication.packets.collect { incoming.send(it) }
+                }
+
+                try {
+                    LoaderApplication.send(Packet(data = HandShakeRequestReadyPacket.toBuffer()))
+                    val request = incoming.receive().data.readContent<HandShakePacket>()
+                    if (!onLoad.invoke(request.protocolVersion)) {
+                        onUnload.invoke()
+                        unloadInvoked = true
+                        throw UnsupportedOperationException("plugin deny to load")
+                    }
+
+                    LoaderApplication.send(
+                        Packet(data = HandShakePacketResponsePacket(allow = true).toBuffer()),
+                    )
+
+                    val messageDispatcher = launch {
+                        for (packet in incoming) {
+                            val content = packet.data.readByteArray()
+                            withContext(Dispatchers.IO) {
+                                content.usePinned { pinned ->
+                                    onMessage.invoke(pinned.addressOf(0))
+                                }
+                            }
+                        }
+                    }
+                    try {
+                        LoaderApplication.awaitTermination()
+                    } finally {
+                        messageDispatcher.cancelAndJoin()
+                    }
+                } finally {
+                    subscription.cancelAndJoin()
+                    incoming.close()
+                }
+            }
+        } finally {
+            if (!unloadInvoked) {
+                onUnload.invoke()
+            }
+            LoaderApplication.close()
+            dynamicLibrary.close()
+        }
     }
 }

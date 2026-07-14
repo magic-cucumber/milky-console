@@ -21,6 +21,9 @@ kotlin {
             implementation(libs.clikt)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
+
+            implementation(project(":plugin:protocol"))
+
             implementation(project(":utils:pipe"))
             implementation(project(":utils:dlloader"))
         }

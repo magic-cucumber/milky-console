@@ -11,6 +11,7 @@ actual class DLLoader actual constructor(path: String) : AutoCloseable {
     private var handle: HMODULE? = LoadLibraryW(path)
         ?: throw IllegalArgumentException("Unable to load '$path' (Win32 error ${GetLastError()})")
 
+    @Throws(NoSuchElementException::class, IllegalStateException::class)
     actual fun <T : Function<*>> findSymbol(name: String): CPointer<CFunction<T>> {
         val currentHandle = checkNotNull(handle) { "The library has been closed" }
         return GetProcAddress(currentHandle, name)?.reinterpret()

@@ -43,13 +43,13 @@ actual fun IPCAnonymousPipe.Companion.create(): IPCAnonymousPipe = memScoped {
 }
 
 data class WindowsIPCPipe(val sendFD: ULong, val receiveFD: ULong) : IPCAnonymousPipe {
-    override val sink: IPCAnonymousPipeSink = fromSink(sendFD)
-    override val source: IPCAnonymousPipeSource = fromSource(receiveFD)
+    override val sink: IPCAnonymousPipeSink = IPCAnonymousPipe.fromSink(sendFD)
+    override val source: IPCAnonymousPipeSource = IPCAnonymousPipe.fromSource(receiveFD)
 }
 
-actual fun IPCAnonymousPipe.fromSource(fd: ULong): IPCAnonymousPipeSource = WindowsPipeSource(fd)
+actual fun IPCAnonymousPipe.Companion.fromSource(fd: ULong): IPCAnonymousPipeSource = WindowsPipeSource(fd)
 
-actual fun IPCAnonymousPipe.fromSink(fd: ULong): IPCAnonymousPipeSink = WindowsPipeSink(fd)
+actual fun IPCAnonymousPipe.Companion.fromSink(fd: ULong): IPCAnonymousPipeSink = WindowsPipeSink(fd)
 
 private abstract class WindowsPipeEnd(
     final override val fd: ULong,
@@ -195,7 +195,7 @@ private fun isBrokenPipeError(error: Int): Boolean = when (error) {
     ERROR_INVALID_HANDLE,
     ERROR_NO_DATA,
     ERROR_PIPE_NOT_CONNECTED,
-    -> true
+        -> true
 
     else -> false
 }
