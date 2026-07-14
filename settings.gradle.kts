@@ -35,3 +35,4 @@ include(":plugin:protocol")
 
 include(":utils:pipe")
 include(":utils:dlloader")
+include(":utils:logger")

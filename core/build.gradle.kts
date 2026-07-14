@@ -24,7 +24,6 @@ kotlin {
         commonMain.dependencies {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
-            implementation(libs.kermit)
             implementation(libs.milky.types)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)
@@ -33,6 +32,8 @@ kotlin {
             implementation(libs.ktor.client.logging)
             implementation(libs.clikt)
             implementation(libs.okio)
+
+            implementation(project(":utils:logger"))
         }
 
         commonTest.dependencies {
