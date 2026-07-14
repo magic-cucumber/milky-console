@@ -1,8 +1,24 @@
 package top.kagg886.saltify.console.util.pipe
 
-/**
- * ================================================
- * Author:     iveou
- * Created on: 2026/7/14 10:22
- * ================================================
- */
+import okio.Sink
+import okio.Source
+
+
+interface IPCAnonymousPipe {
+    val sink: IPCAnonymousPipeSink
+    val source: IPCAnonymousPipeSource
+
+    companion object
+}
+
+interface HasFileDescriptor {
+    val fd: ULong
+    val closed: Boolean
+}
+
+interface IPCAnonymousPipeSource: Source, HasFileDescriptor
+interface IPCAnonymousPipeSink: Sink, HasFileDescriptor
+
+expect fun IPCAnonymousPipe.Companion.create(): IPCAnonymousPipe
+expect fun IPCAnonymousPipe.fromSource(fd: ULong): IPCAnonymousPipeSource
+expect fun IPCAnonymousPipe.fromSink(fd: ULong): IPCAnonymousPipeSink
