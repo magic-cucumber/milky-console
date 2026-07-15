@@ -8,6 +8,7 @@ import kotlinx.cinterop.alloc
 import kotlinx.cinterop.cstr
 import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
+import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.toCPointer
 import kotlinx.cinterop.value
 import kotlinx.coroutines.withContext
@@ -41,7 +42,7 @@ actual fun Process.Companion.create(config: ProcessConfig): Process {
                 standardOutput(config.stderr, stderr, STD_ERROR_HANDLE, inheritedHandles, ownedChildHandles)
 
             config.inheritedFD.forEach { fd ->
-                val handle = fd.toCPointer<ByteVar>() ?: error("null inherited handle")
+                val handle = fd.toLong().toCPointer<ByteVar>() ?: error("null inherited handle")
                 makeInheritable(handle)
                 inheritedHandles += handle
             }
@@ -63,7 +64,7 @@ actual fun Process.Companion.create(config: ProcessConfig): Process {
                 lpStartupInfo = startup.ptr,
                 lpProcessInformation = processInfo.ptr,
             )
-            inheritedHandles.forEach { SetHandleInformation(it, HANDLE_FLAG_INHERIT.toUInt(), 0u) }
+            inheritedHandles.forEach { makeInheritable(it.reinterpret()) }
             ownedChildHandles.forEach { CloseHandle(it) }
             if (created == 0) error("CreateProcessA failed: Windows error ${GetLastError()}")
 

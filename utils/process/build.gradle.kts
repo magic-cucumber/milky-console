@@ -9,15 +9,11 @@ plugins {
 
 kotlin {
     macosArm64 {
-        compilations.getByName("main").cinterops.create("posixSpawn") {
+        compilations.getByName("main").cinterops.create("posix_spawn") {
             defFile(project.file("src/nativeInterop/cinterop/posix_spawn.def"))
         }
     }
-    linuxX64 {
-        compilations.getByName("main").cinterops.create("posixSpawn") {
-            defFile(project.file("src/nativeInterop/cinterop/posix_spawn.def"))
-        }
-    }
+    linuxX64()
     mingwX64()
 
     applyDefaultHierarchyTemplate {

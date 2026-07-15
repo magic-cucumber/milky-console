@@ -2,42 +2,14 @@
 
 package top.kagg886.milky.console.util.process
 
-import kotlinx.cinterop.ByteVar
-import kotlinx.cinterop.CPointerVar
-import kotlinx.cinterop.IntVar
-import kotlinx.cinterop.alloc
-import kotlinx.cinterop.allocArray
-import kotlinx.cinterop.cstr
-import kotlinx.cinterop.get
-import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.ptr
-import kotlinx.cinterop.set
-import kotlinx.cinterop.toKString
+import kotlinx.cinterop.*
 import kotlinx.coroutines.withContext
-import platform.posix.EINTR
-import platform.posix.O_RDONLY
-import platform.posix.O_WRONLY
-import platform.posix.SIGKILL
-import platform.posix.SIGTERM
-import platform.posix.STDIN_FILENO
-import platform.posix.STDERR_FILENO
-import platform.posix.STDOUT_FILENO
-import platform.posix.errno
-import platform.posix.kill
-import platform.posix.waitpid
-import kotlinx.cinterop.value
-import platform.posix._POSIX_SPAWN
+import platform.posix.*
+import platform.posix_spawn.*
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipe
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipeSink
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipeSource
 import top.kagg886.milky.console.util.pipe.create
-import top.kagg886.milky.console.util.process.posixspawn.posix_spawn_file_actions_addclose
-import top.kagg886.milky.console.util.process.posixspawn.posix_spawn_file_actions_adddup2
-import top.kagg886.milky.console.util.process.posixspawn.posix_spawn_file_actions_addopen
-import top.kagg886.milky.console.util.process.posixspawn.posix_spawn_file_actions_destroy
-import top.kagg886.milky.console.util.process.posixspawn.posix_spawn_file_actions_init
-import top.kagg886.milky.console.util.process.posixspawn.posix_spawn_file_actions_t
-import top.kagg886.milky.console.util.process.posixspawn.posix_spawnp
 
 actual fun Process.Companion.create(config: ProcessConfig): Process {
     require(config.workingDirectory == null) {
@@ -50,19 +22,19 @@ actual fun Process.Companion.create(config: ProcessConfig): Process {
 
     return try {
         memScoped {
-            val actions = alloc<posix_spawn_file_actions_t>()
+            val actions = alloc<posix_spawn_file_actions_tVar>()
             checkSpawn(posix_spawn_file_actions_init(actions.ptr), "posix_spawn_file_actions_init")
             try {
-                addInputAction(actions, config.stdin, stdin)
-                addOutputAction(actions, config.stdout, stdout, STDOUT_FILENO)
-                addOutputAction(actions, config.stderr, stderr, STDERR_FILENO)
+                addInputAction(actions.ptr, config.stdin, stdin)
+                addOutputAction(actions.ptr, config.stdout, stdout, STDOUT_FILENO)
+                addOutputAction(actions.ptr, config.stderr, stderr, STDERR_FILENO)
 
                 val arguments = listOf(config.executable) + config.arguments
                 val argv = cStringArray(arguments)
                 val environment = cStringArray(mergedEnvironment(config.environment))
                 val pid = alloc<IntVar>()
                 checkSpawn(
-                    posix_spawnp(pid.ptr, config.executable.cstr.getPointer(this), actions.ptr, null, argv, environment),
+                    posix_spawnp(pid.ptr, config.executable, actions.ptr, null, argv, environment),
                     "posix_spawnp",
                 )
 
@@ -82,7 +54,7 @@ actual fun Process.Companion.create(config: ProcessConfig): Process {
     }
 }
 
-private fun kotlinx.cinterop.MemScope.cStringArray(values: List<String>): kotlinx.cinterop.CPointer<CPointerVar<ByteVar>> {
+private fun MemScope.cStringArray(values: List<String>): CPointer<CPointerVar<ByteVar>> {
     val result = allocArray<CPointerVar<ByteVar>>(values.size + 1)
     values.forEachIndexed { index, value -> result[index] = value.cstr.getPointer(this) }
     result[values.size] = null
@@ -93,7 +65,7 @@ private fun mergedEnvironment(overrides: Map<String, String>): List<String> {
     val values = linkedMapOf<String, String>()
     var index = 0
     while (true) {
-        val entry = environ[index++] ?: break
+        val entry = environ?.get(index++) ?: break
         val text = entry.toKString()
         val separator = text.indexOf('=')
         if (separator > 0) values[text.substring(0, separator)] = text.substring(separator + 1)
@@ -102,11 +74,11 @@ private fun mergedEnvironment(overrides: Map<String, String>): List<String> {
     return values.map { (name, value) -> "$name=$value" }
 }
 
-private fun addInputAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_actions_t>, option: ProcessConfig.IOOptions, pipe: IPCAnonymousPipe?) {
+private fun addInputAction(actions: CPointer<posix_spawn_file_actions_tVar>, option: ProcessConfig.IOOptions, pipe: IPCAnonymousPipe?) {
     when (option) {
         ProcessConfig.IOOptions.Inherited -> Unit
         ProcessConfig.IOOptions.None -> checkSpawn(
-            posix_spawn_file_actions_addopen(actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0),
+            posix_spawn_file_actions_addopen(actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0u),
             "posix_spawn_file_actions_addopen",
         )
         ProcessConfig.IOOptions.Redirected -> {
@@ -116,11 +88,11 @@ private fun addInputAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_a
     }
 }
 
-private fun addOutputAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_actions_t>, option: ProcessConfig.IOOptions, pipe: IPCAnonymousPipe?, target: Int) {
+private fun addOutputAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_actions_tVar>, option: ProcessConfig.IOOptions, pipe: IPCAnonymousPipe?, target: Int) {
     when (option) {
         ProcessConfig.IOOptions.Inherited -> Unit
         ProcessConfig.IOOptions.None -> checkSpawn(
-            posix_spawn_file_actions_addopen(actions, target, "/dev/null", O_WRONLY, 0),
+            posix_spawn_file_actions_addopen(actions, target, "/dev/null", O_WRONLY, 0u),
             "posix_spawn_file_actions_addopen",
         )
         ProcessConfig.IOOptions.Redirected -> {
@@ -130,7 +102,7 @@ private fun addOutputAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_
     }
 }
 
-private fun addPipeAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_actions_t>, childEnd: Int, parentEnd: Int, target: Int) {
+private fun addPipeAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_actions_tVar>, childEnd: Int, parentEnd: Int, target: Int) {
     checkSpawn(posix_spawn_file_actions_addclose(actions, parentEnd), "posix_spawn_file_actions_addclose")
     if (childEnd != target) {
         checkSpawn(posix_spawn_file_actions_adddup2(actions, childEnd, target), "posix_spawn_file_actions_adddup2")

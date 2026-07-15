@@ -1,2 +1,5 @@
 headers = spawn.h unistd.h
-package = top.kagg886.milky.console.util.process.posixspawn
+package = platform.posix_spawn
+
+---
+extern char **environ;
