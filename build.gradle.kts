@@ -5,3 +5,8 @@ plugins {
     alias(libs.plugins.ksp).apply(false)
     alias(libs.plugins.androidx.room3).apply(false)
 }
+
+
+//TODO workaround
+val layout = rootProject.file("build/reports/problems/problems-report.html")
+layout.delete()

@@ -1,0 +1,2 @@
+headers = spawn.h unistd.h
+package = top.kagg886.milky.console.util.process.posixspawn
