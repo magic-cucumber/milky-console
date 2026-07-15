@@ -1,4 +1,4 @@
-package top.kagg886.milky.console.commands
+package top.kagg886.milky.console.terminal.commands
 
 import com.github.ajalt.clikt.command.SuspendingCliktCommand
 import top.kagg886.milky.console.terminal.Terminal

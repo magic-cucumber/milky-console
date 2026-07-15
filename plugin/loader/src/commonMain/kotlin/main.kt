@@ -57,7 +57,7 @@ class LoaderCommand : SuspendingCliktCommand() {
     override suspend fun run() {
         val dynamicLibrary = DLLoader(dynamicLibraryPath)
 
-        val onLoad = dynamicLibrary.findSymbol<(Int) -> Boolean>(ON_LOAD_SYMBOL)
+        val onLoad = dynamicLibrary.findSymbol<(CPointer<ByteVar>?) -> Boolean>(ON_LOAD_SYMBOL)
         val onUnload = dynamicLibrary.findSymbol<() -> Int>(ON_UNLOAD_SYMBOL)
         val onMessage = dynamicLibrary.findSymbol<(CPointer<ByteVar>?) -> Unit>(ON_MESSAGE_SYMBOL)
 
@@ -68,26 +68,25 @@ class LoaderCommand : SuspendingCliktCommand() {
             LoaderApplication.initialize(source, sink)
 
             coroutineScope {
+                LoaderApplication.send(Packet(data = HandShakeRequestReadyPacket.toBuffer()))
+                val request = LoaderApplication.receiveHandshakePacket().data.readContent<HandShakePacket>()
+                val allow = request.config.usePinned { onLoad.invoke(it.addressOf(0)) }
+                LoaderApplication.send(
+                    Packet(data = HandShakePacketResponsePacket(allow = allow).toBuffer()),
+                )
+                if (!allow) {
+                    onUnload.invoke()
+                    unloadInvoked = true
+                    return@coroutineScope
+                }
+
                 val incoming = Channel<Packet>(Channel.UNLIMITED)
-                // One uninterrupted subscription prevents packets from being lost
-                // while switching from handshake handling to message dispatch.
                 val subscription = launch(start = CoroutineStart.UNDISPATCHED) {
                     LoaderApplication.packets.collect { incoming.send(it) }
                 }
+                LoaderApplication.startReceiving()
 
                 try {
-                    LoaderApplication.send(Packet(data = HandShakeRequestReadyPacket.toBuffer()))
-                    val request = incoming.receive().data.readContent<HandShakePacket>()
-                    if (!onLoad.invoke(request.protocolVersion)) {
-                        onUnload.invoke()
-                        unloadInvoked = true
-                        throw UnsupportedOperationException("plugin deny to load")
-                    }
-
-                    LoaderApplication.send(
-                        Packet(data = HandShakePacketResponsePacket(allow = true).toBuffer()),
-                    )
-
                     val messageDispatcher = launch {
                         for (packet in incoming) {
                             val content = packet.data.readByteArray()

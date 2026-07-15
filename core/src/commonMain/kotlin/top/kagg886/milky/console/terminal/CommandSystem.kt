@@ -15,53 +15,6 @@ import com.github.ajalt.mordant.terminal.Terminal as MordantTerminal
 import top.kagg886.milky.console.util.logger.asTaggedLogger
 import kotlin.time.TimeMark
 
-/** Parses one command line using the console's shell-like quoting rules. */
-fun String.toArgv(): List<String> {
-    val args = mutableListOf<String>()
-    val current = StringBuilder()
-    var state = ParseState.NORMAL
-    var previous = ParseState.NORMAL
-
-    for (char in this) {
-        when (state) {
-            ParseState.NORMAL -> when {
-                char.isWhitespace() -> current.pushTo(args)
-                char == '\'' -> state = ParseState.SINGLE_QUOTE
-                char == '"' -> state = ParseState.DOUBLE_QUOTE
-                char == '\\' -> {
-                    previous = state
-                    state = ParseState.ESCAPE
-                }
-
-                else -> current.append(char)
-            }
-
-            ParseState.SINGLE_QUOTE -> when (char) {
-                '\'' -> state = ParseState.NORMAL
-                else -> current.append(char)
-            }
-
-            ParseState.DOUBLE_QUOTE -> when (char) {
-                '"' -> state = ParseState.NORMAL
-                '\\' -> {
-                    previous = state
-                    state = ParseState.ESCAPE
-                }
-
-                else -> current.append(char)
-            }
-
-            ParseState.ESCAPE -> {
-                current.append(char)
-                state = previous
-            }
-        }
-    }
-
-    current.pushTo(args)
-    return args
-}
-
 internal class CommandSystem(
     private val panelTerminal: MordantTerminal = MordantTerminal(),
     private val logger: Logger = "Command".asTaggedLogger,
@@ -108,26 +61,75 @@ internal class CommandSystem(
         )
         return RootCommand(::emit, commandTerminal)
     }
-}
 
+    private class RootCommand(
+        private val emit: (Any?) -> Unit,
+        commandTerminal: MordantTerminal,
+    ) : SuspendingCliktCommand(name = "milky-console") {
+        init {
+            context {
+                terminal = commandTerminal
+                echoMessage = { _, message, _, _ -> emit(message) }
+            }
+        }
 
-private class RootCommand(
-    private val emit: (Any?) -> Unit,
-    commandTerminal: MordantTerminal,
-) : SuspendingCliktCommand(name = "milky-console") {
-    init {
-        context {
-            terminal = commandTerminal
-            echoMessage = { _, message, _, _ -> emit(message) }
+        override suspend fun run() {
+            if (currentContext.invokedSubcommand == null) {
+                echoFormattedHelp()
+            }
         }
     }
 
-    override suspend fun run() {
-        if (currentContext.invokedSubcommand == null) {
-            echoFormattedHelp()
+    internal companion object {
+        /** Parses one command line using the console's shell-like quoting rules. */
+        fun String.toArgv(): List<String> {
+            val args = mutableListOf<String>()
+            val current = StringBuilder()
+            var state = ParseState.NORMAL
+            var previous = ParseState.NORMAL
+
+            for (char in this) {
+                when (state) {
+                    ParseState.NORMAL -> when {
+                        char.isWhitespace() -> current.pushTo(args)
+                        char == '\'' -> state = ParseState.SINGLE_QUOTE
+                        char == '"' -> state = ParseState.DOUBLE_QUOTE
+                        char == '\\' -> {
+                            previous = state
+                            state = ParseState.ESCAPE
+                        }
+
+                        else -> current.append(char)
+                    }
+
+                    ParseState.SINGLE_QUOTE -> when (char) {
+                        '\'' -> state = ParseState.NORMAL
+                        else -> current.append(char)
+                    }
+
+                    ParseState.DOUBLE_QUOTE -> when (char) {
+                        '"' -> state = ParseState.NORMAL
+                        '\\' -> {
+                            previous = state
+                            state = ParseState.ESCAPE
+                        }
+
+                        else -> current.append(char)
+                    }
+
+                    ParseState.ESCAPE -> {
+                        current.append(char)
+                        state = previous
+                    }
+                }
+            }
+
+            current.pushTo(args)
+            return args
         }
     }
 }
+
 
 private class NonInteractiveTerminalInterface(
     private val delegate: TerminalInterface,

@@ -1,0 +1,45 @@
+name: Test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            gradle-command: ./gradlew
+            test-task: linuxX64Test
+          - name: Windows
+            os: windows-latest
+            gradle-command: .\\gradlew.bat
+            test-task: mingwX64Test
+          - name: macOS
+            os: macos-latest
+            gradle-command: ./gradlew
+            test-task: macosArm64Test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: gradle
+
+      - name: Verify CMake
+        run: cmake --version
+
+      - name: Run all native tests
+        run: ${{ matrix.gradle-command }} ${{ matrix.test-task }} --stacktrace

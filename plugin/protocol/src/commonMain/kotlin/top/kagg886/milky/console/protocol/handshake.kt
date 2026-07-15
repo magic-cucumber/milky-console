@@ -16,7 +16,20 @@ data object HandShakeRequestReadyPacket
 
 @Serializable
 @SerialName("handshake-request")
-data class HandShakePacket(val protocolVersion: Int)
+data class HandShakePacket(val config: ByteArray) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is HandShakePacket) return false
+
+        if (!config.contentEquals(other.config)) return false
+
+        return true
+    }
+
+    override fun hashCode(): Int {
+        return config.contentHashCode()
+    }
+}
 
 @Serializable
 @SerialName("handshake-request-response")

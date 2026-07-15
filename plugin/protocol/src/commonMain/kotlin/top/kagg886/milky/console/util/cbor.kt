@@ -19,5 +19,5 @@ inline fun <reified T> Buffer.readContent(format: Cbor = Cbor): T = format.decod
 
 @OptIn(ExperimentalSerializationApi::class)
 inline fun <reified T> T.toBuffer(format: Cbor = Cbor) : Buffer = Buffer().apply {
-    write(format.encodeToByteArray(this))
+    write(format.encodeToByteArray(this@toBuffer))
 }

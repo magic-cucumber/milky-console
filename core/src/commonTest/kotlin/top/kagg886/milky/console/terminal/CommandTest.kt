@@ -5,7 +5,8 @@ import com.github.ajalt.clikt.core.terminal
 import com.github.ajalt.clikt.parameters.arguments.argument
 import com.github.ajalt.mordant.terminal.Terminal
 import kotlinx.coroutines.test.runTest
-import top.kagg886.milky.console.commands.TerminalCommand
+import top.kagg886.milky.console.terminal.CommandSystem.Companion.toArgv
+import top.kagg886.milky.console.terminal.commands.TerminalCommand
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse

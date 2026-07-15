@@ -1,4 +1,4 @@
-package top.kagg886.milky.console.commands
+package top.kagg886.milky.console.terminal.commands
 
 /**
  * ================================================

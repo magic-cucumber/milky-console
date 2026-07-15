@@ -21,8 +21,7 @@ import com.github.ajalt.mordant.widgets.Viewport
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
-import platform.posix.log
-import top.kagg886.milky.console.commands.TerminalCommand
+import top.kagg886.milky.console.terminal.commands.TerminalCommand
 
 /**
  * Owns the interactive terminal panel and its complete lifecycle.
