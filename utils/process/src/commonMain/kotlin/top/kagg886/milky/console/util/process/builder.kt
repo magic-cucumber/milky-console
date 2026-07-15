@@ -14,7 +14,7 @@ data class ProcessConfig(
     val stdin: IOOptions = IOOptions.Inherited,
     val stdout: IOOptions = IOOptions.Inherited,
     val stderr: IOOptions = IOOptions.Inherited,
-    val inheritedFD: Set<Long> = emptySet(),
+    val inheritedFD: Set<ULong> = emptySet(),
     val context: CoroutineContext = Dispatchers.IO + SupervisorJob()
 ) {
     init {

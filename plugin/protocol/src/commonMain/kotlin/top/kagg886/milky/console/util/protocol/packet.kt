@@ -1,6 +1,8 @@
 package top.kagg886.milky.console.util.protocol
 
+import kotlinx.serialization.ExperimentalSerializationApi
 import okio.Buffer
+import top.kagg886.milky.console.util.toBuffer
 import kotlin.uuid.Uuid
 
 /**
@@ -17,3 +19,7 @@ data class Packet(
     val group: Uuid? = null,
     val data: Buffer = Buffer()
 )
+
+
+@OptIn(ExperimentalSerializationApi::class)
+inline fun <reified T> T.toPacket(): List<Packet> = Packet(data = this.toBuffer()).split()

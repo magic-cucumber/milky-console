@@ -1,0 +1,2 @@
+headers = milky_console.h
+package = platform.milky_console_interop

@@ -1,4 +1,4 @@
-@file:OptIn(kotlinx.cinterop.ExperimentalForeignApi::class)
+@file:OptIn(ExperimentalForeignApi::class)
 
 package top.kagg886.milky.console.util.process
 
@@ -28,15 +28,24 @@ actual fun Process.Companion.create(config: ProcessConfig): Process {
                 addInputAction(actions.ptr, config.stdin, stdin)
                 addOutputAction(actions.ptr, config.stdout, stdout, STDOUT_FILENO)
                 addOutputAction(actions.ptr, config.stderr, stderr, STDERR_FILENO)
+                addCloseActionsForUninheritedDescriptors(
+                    actions.ptr,
+                    config.inheritedFD,
+                    stdin,
+                    stdout,
+                    stderr,
+                )
 
                 val arguments = listOf(config.executable) + config.arguments
                 val argv = cStringArray(arguments)
                 val environment = cStringArray(mergedEnvironment(config.environment))
                 val pid = alloc<IntVar>()
-                checkSpawn(
-                    posix_spawnp(pid.ptr, config.executable, actions.ptr, null, argv, environment),
-                    "posix_spawnp",
-                )
+                withInheritedFileDescriptors(config.inheritedFD) {
+                    checkSpawn(
+                        posix_spawnp(pid.ptr, config.executable, actions.ptr, null, argv, environment),
+                        "posix_spawnp",
+                    )
+                }
 
                 stdin?.source?.close()
                 stdout?.sink?.close()
@@ -54,7 +63,7 @@ actual fun Process.Companion.create(config: ProcessConfig): Process {
     }
 }
 
-private fun kotlinx.cinterop.MemScope.cStringArray(values: List<String>): kotlinx.cinterop.CPointer<CPointerVar<ByteVar>> {
+private fun MemScope.cStringArray(values: List<String>): CPointer<CPointerVar<ByteVar>> {
     val result = allocArray<CPointerVar<ByteVar>>(values.size + 1)
     values.forEachIndexed { index, value -> result[index] = value.cstr.getPointer(this) }
     result[values.size] = null
@@ -74,7 +83,7 @@ private fun mergedEnvironment(overrides: Map<String, String>): List<String> {
     return values.map { (name, value) -> "$name=$value" }
 }
 
-private fun addInputAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_actions_t>, option: ProcessConfig.IOOptions, pipe: IPCAnonymousPipe?) {
+private fun addInputAction(actions: CPointer<posix_spawn_file_actions_t>, option: ProcessConfig.IOOptions, pipe: IPCAnonymousPipe?) {
     when (option) {
         ProcessConfig.IOOptions.Inherited -> Unit
         ProcessConfig.IOOptions.None -> checkSpawn(
@@ -88,7 +97,7 @@ private fun addInputAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_a
     }
 }
 
-private fun addOutputAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_actions_t>, option: ProcessConfig.IOOptions, pipe: IPCAnonymousPipe?, target: Int) {
+private fun addOutputAction(actions: CPointer<posix_spawn_file_actions_t>, option: ProcessConfig.IOOptions, pipe: IPCAnonymousPipe?, target: Int) {
     when (option) {
         ProcessConfig.IOOptions.Inherited -> Unit
         ProcessConfig.IOOptions.None -> checkSpawn(
@@ -102,7 +111,7 @@ private fun addOutputAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_
     }
 }
 
-private fun addPipeAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_actions_t>, childEnd: Int, parentEnd: Int, target: Int) {
+private fun addPipeAction(actions: CPointer<posix_spawn_file_actions_t>, childEnd: Int, parentEnd: Int, target: Int) {
     checkSpawn(posix_spawn_file_actions_addclose(actions, parentEnd), "posix_spawn_file_actions_addclose")
     if (childEnd != target) {
         checkSpawn(posix_spawn_file_actions_adddup2(actions, childEnd, target), "posix_spawn_file_actions_adddup2")
@@ -110,8 +119,78 @@ private fun addPipeAction(actions: kotlinx.cinterop.CPointer<posix_spawn_file_ac
     }
 }
 
+/** Gives the child Windows HANDLE_LIST-style descriptor inheritance semantics. */
+private fun addCloseActionsForUninheritedDescriptors(
+    actions: CPointer<posix_spawn_file_actions_t>,
+    inheritedFD: Set<ULong>,
+    stdin: IPCAnonymousPipe?,
+    stdout: IPCAnonymousPipe?,
+    stderr: IPCAnonymousPipe?,
+) {
+    val inherited = inheritedFD.mapTo(mutableSetOf()) { fd ->
+        val descriptor = fd.toInt()
+        require(descriptor >= 0 && descriptor.toULong() == fd) { "invalid file descriptor: $fd" }
+        descriptor
+    }
+    inherited += setOf(STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO)
+
+    // The preceding pipe actions consume and close these descriptors.
+    val pipeDescriptors = listOfNotNull(stdin, stdout, stderr)
+        .flatMap { pipe -> listOf(pipe.source.fd.toInt(), pipe.sink.fd.toInt()) }
+
+    openFileDescriptors()
+        .asSequence()
+        .filter { it !in inherited && it !in pipeDescriptors }
+        .forEach { descriptor ->
+            checkSpawn(
+                posix_spawn_file_actions_addclose(actions, descriptor),
+                "posix_spawn_file_actions_addclose",
+            )
+        }
+}
+
+private fun openFileDescriptors(): Set<Int> {
+    val directory = opendir("/proc/self/fd") ?: error("opendir(/proc/self/fd) failed: errno $errno")
+    return try {
+        buildSet {
+            while (true) {
+                val entry = readdir(directory) ?: break
+                entry.pointed.d_name.toKString().toIntOrNull()?.let(::add)
+            }
+        }
+    } finally {
+        closedir(directory)
+    }
+}
+
 private fun checkSpawn(result: Int, operation: String) {
     if (result != 0) error("$operation failed: errno $result")
+}
+
+private inline fun <T> withInheritedFileDescriptors(fds: Set<ULong>, block: () -> T): T {
+    val originalFlags = fds.associate { fd ->
+        val descriptor = fd.toInt()
+        require(descriptor >= 0 && descriptor.toULong() == fd) { "invalid file descriptor: $fd" }
+        val flags = fcntl(descriptor, F_GETFD)
+        check(flags >= 0) { "fcntl(F_GETFD) failed for fd $descriptor: errno $errno" }
+        descriptor to flags
+    }
+    val closeOnExecDescriptors = originalFlags.filterValues { it and FD_CLOEXEC != 0 }
+
+    try {
+        closeOnExecDescriptors.forEach { (descriptor, flags) ->
+            check(fcntl(descriptor, F_SETFD, flags and FD_CLOEXEC.inv()) == 0) {
+                "fcntl(F_SETFD) failed for fd $descriptor: errno $errno"
+            }
+        }
+        return block()
+    } finally {
+        closeOnExecDescriptors.forEach { (descriptor, flags) ->
+            if (fcntl(descriptor, F_SETFD, flags) != 0) {
+                error("fcntl(F_SETFD) failed while restoring fd $descriptor: errno $errno")
+            }
+        }
+    }
 }
 
 private fun closeAllEnds(stdin: IPCAnonymousPipe?, stdout: IPCAnonymousPipe?, stderr: IPCAnonymousPipe?) {

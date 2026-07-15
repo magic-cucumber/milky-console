@@ -25,7 +25,7 @@ class ProcessBuilderScope {
     private var stdin: ProcessConfig.IOOptions = ProcessConfig.IOOptions.Inherited
     private var stdout: ProcessConfig.IOOptions = ProcessConfig.IOOptions.Inherited
     private var stderr: ProcessConfig.IOOptions = ProcessConfig.IOOptions.Inherited
-    private var inheritedFD: MutableSet<Long> = mutableSetOf()
+    private var inheritedFD: MutableSet<ULong> = mutableSetOf()
 
     private var context: CoroutineContext = Dispatchers.IO + SupervisorJob()
 
@@ -65,7 +65,7 @@ class ProcessBuilderScope {
         stderr = value
     }
 
-    fun inheritFD(vararg fds: Long) {
+    fun inheritFD(vararg fds: ULong) {
         inheritedFD.addAll(fds.asList())
     }
 

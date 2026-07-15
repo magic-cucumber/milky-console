@@ -1,7 +1,11 @@
 package top.kagg886.milky.console.plugin
 
-import top.kagg886.milky.console.plugin.config.ManifestMetadata
+import kotlinx.serialization.json.JsonObject
+import okio.Path
+import top.kagg886.milky.console.util.pipe.IPCAnonymousPipe
+import top.kagg886.milky.console.util.process.Process
 import top.kagg886.milky.console.plugin.config.PluginManifest
+import top.kagg886.saltify.console.util.dlloader.DLLoader
 
 /**
  * ================================================
@@ -10,12 +14,57 @@ import top.kagg886.milky.console.plugin.config.PluginManifest
  * ================================================
  */
 
-val IPlugin.manifest: PluginManifest
+val Plugin.manifest: PluginManifest
     get() {
         val s = state
-        check(s is IPlugin.State.ManifestInitialized) {
+        check(s is Plugin.State.ManifestInitialized) {
             "Plugin's state is not in ManifestInitialized"
         }
 
+        return s.manifest
+    }
+
+val Plugin.libpath: Path
+    get() {
+        val s = state
+        check(s is Plugin.State.ManifestInitialized) {
+            "Plugin's state is not in ManifestInitialized"
+        }
+        return s.libpath
+    }
+
+val Plugin.config: JsonObject
+    get() {
+        val s = state
+        check(s is Plugin.State.ConfigInitialized) {
+            "Plugin's state is not in ConfigInitialized"
+        }
         return s.config
+    }
+
+val Plugin.process: Process
+    get() {
+        val s = state
+        check(s is Plugin.State.ProgressInitialized) {
+            "Plugin's state is not in ProgressInitialized"
+        }
+        return s.process
+    }
+
+val Plugin.ipc: IPCAnonymousPipe
+    get() {
+        val s = state
+        check(s is Plugin.State.ProgressInitialized) {
+            "Plugin's state is not in ProgressInitialized"
+        }
+        return s.ipc
+    }
+
+val Plugin.dlLoader: DLLoader
+    get() {
+        val s = state
+        check(s is Plugin.State.ProgressInitialized) {
+            "Plugin's state is not in ProgressInitialized"
+        }
+        return s.dlLoader
     }
