@@ -79,9 +79,11 @@ data object LoaderApplication {
     suspend fun send(packet: Packet) {
         check(started) { "LoaderApplication has not been initialized" }
         val sink = checkNotNull(sink)
-        sendMutex.withLock {
-            packet.split().forEach(sink::writePacket)
-            sink.flush()
+        packet.split().forEach {
+            sendMutex.withLock {
+                sink.writePacket(it)
+                sink.flush()
+            }
         }
     }
 
