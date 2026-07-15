@@ -17,6 +17,7 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 import kotlin.uuid.Uuid
 
@@ -33,18 +34,21 @@ class PacketUtilTest {
         assertContentEquals(BuildConfig.MAGIC_BYTES, wire.copy().readByteArray(BuildConfig.MAGIC_BYTES.size.toLong()))
         val decoded = wire.readPacket()
         assertFalse(decoded.isSplit)
+        assertEquals(packet.uuid, decoded.uuid)
         assertEquals("already gzipped data", decoded.data.readUtf8())
     }
 
     @Test
     fun writesAndReadsSplitPacket() {
         val uuid = Uuid.random()
+        val group = Uuid.random()
         val wire = Buffer()
-        wire.writePacket(Packet(index = 1, size = 3, uuid = uuid, data = Buffer().writeUtf8("part")))
+        wire.writePacket(Packet(index = 1, size = 3, uuid = uuid, group = group, data = Buffer().writeUtf8("part")))
 
         val decoded = wire.readPacket()
         assertTrue(decoded.isSplit)
         assertEquals(uuid, decoded.uuid)
+        assertEquals(group, decoded.group)
         assertEquals(1, decoded.index)
         assertEquals(3, decoded.size)
         assertEquals("part", decoded.data.readUtf8())
@@ -74,7 +78,7 @@ class PacketUtilTest {
         packets.forEachIndexed { index, packet ->
             assertEquals(index, packet.index)
             assertEquals(2, packet.size)
-            assertEquals(packets.first().uuid, packet.uuid)
+            assertEquals(packets.first().group, packet.group)
             assertTrue(packet.totalSize <= BuildConfig.MAX_PACKET_SIZE)
         }
         val joined = Buffer()
@@ -98,6 +102,7 @@ class PacketUtilTest {
             .write(BuildConfig.MAGIC_BYTES)
             .writeShort(BuildConfig.SCHEMA_VERSION.toInt())
             .writeInt((MAX_SINGLE_PACKET_DATA_SIZE + 1L).toInt())
+            .write(Uuid.random().toByteArray())
             .writeByte(0)
 
         assertFailsWith<IllegalArgumentException> {
@@ -114,24 +119,24 @@ class PacketUtilTest {
 
     @Test
     fun mergesShuffledPacketsWithoutConsumingTheirData() {
-        val uuid = Uuid.random()
-        val first = Packet(index = 0, size = 2, uuid = uuid, data = Buffer().writeUtf8("first"))
-        val second = Packet(index = 1, size = 2, uuid = uuid, data = Buffer().writeUtf8("second"))
+        val group = Uuid.random()
+        val first = Packet(index = 0, size = 2, group = group, data = Buffer().writeUtf8("first"))
+        val second = Packet(index = 1, size = 2, group = group, data = Buffer().writeUtf8("second"))
 
         val merged = listOf(second, first).merge()
 
         assertFalse(merged.isSplit)
-        assertEquals(uuid, merged.uuid)
+        assertNotEquals(merged.uuid, first.uuid)
         assertEquals("firstsecond", merged.data.readUtf8())
         assertEquals("first", first.data.copy().readUtf8())
         assertEquals("second", second.data.copy().readUtf8())
     }
 
     @Test
-    fun rejectsPacketsWithDifferentUuids() {
+    fun rejectsPacketsWithDifferentGroups() {
         val packets = listOf(
-            Packet(index = 0, size = 2, data = Buffer().writeUtf8("first")),
-            Packet(index = 1, size = 2, data = Buffer().writeUtf8("second")),
+            Packet(index = 0, size = 2, group = Uuid.random(), data = Buffer().writeUtf8("first")),
+            Packet(index = 1, size = 2, group = Uuid.random(), data = Buffer().writeUtf8("second")),
         )
 
         assertFailsWith<IllegalArgumentException> {
@@ -141,15 +146,15 @@ class PacketUtilTest {
 
     @Test
     fun rejectsIncompleteOrDuplicatedPackets() {
-        val uuid = Uuid.random()
+        val group = Uuid.random()
 
         assertFailsWith<IllegalArgumentException> {
-            listOf(Packet(index = 0, size = 2, uuid = uuid)).merge()
+            listOf(Packet(index = 0, size = 2, group = group)).merge()
         }
         assertFailsWith<IllegalArgumentException> {
             listOf(
-                Packet(index = 0, size = 2, uuid = uuid),
-                Packet(index = 0, size = 2, uuid = uuid),
+                Packet(index = 0, size = 2, group = group),
+                Packet(index = 0, size = 2, group = group),
             ).merge()
         }
     }

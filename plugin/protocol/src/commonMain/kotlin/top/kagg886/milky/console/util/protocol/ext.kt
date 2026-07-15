@@ -13,10 +13,10 @@ import kotlin.uuid.Uuid
  * ================================================
  */
 
-/** magic、schema、data size 与 split 标记占用的固定包头大小。 */
-internal val FIXED_HEADER_SIZE: Long = BuildConfig.MAGIC_BYTES.size.toLong() + 2L + 4L + 1L
+/** magic、schema、data size、split 标记与包 UUID 占用的固定包头大小。 */
+internal val FIXED_HEADER_SIZE: Long = BuildConfig.MAGIC_BYTES.size.toLong() + 2L + 4L + 1L + 16L
 
-/** 分包 UUID、index 与总包数占用的额外包头大小。 */
+/** 分包组 UUID、index 与总包数占用的额外包头大小。 */
 internal const val SPLIT_HEADER_SIZE = 16L + 4L + 4L
 
 /** 不分包时，data 可占用的最大字节数。 */
@@ -50,19 +50,20 @@ fun Source.readPacket(): Packet {
 
     val dataSize = header.readInt()
     require(dataSize >= 0) { "包体大小不能为负数" }
+    val uuid = Uuid.fromByteArray(header.readByteArray(16L))
     return when (val split = header.readByte().toInt()) {
         NOT_SPLIT -> {
             require(dataSize <= MAX_SINGLE_PACKET_DATA_SIZE) { "不能传输过大的bytes" }
-            Packet(data = readExactly(dataSize.toLong()))
+            Packet(uuid = uuid, data = readExactly(dataSize.toLong()))
         }
         IS_SPLIT -> {
             require(dataSize <= MAX_SPLIT_PACKET_DATA_SIZE) { "不能传输过大的bytes" }
             val splitHeader = readExactly(SPLIT_HEADER_SIZE)
-            val uuid = Uuid.fromByteArray(splitHeader.readByteArray(16L))
+            val group = Uuid.fromByteArray(splitHeader.readByteArray(16L))
             val index = splitHeader.readInt()
             val count = splitHeader.readInt()
             validateSplit(index, count)
-            Packet(index = index, size = count, uuid = uuid, data = readExactly(dataSize.toLong()))
+            Packet(index = index, size = count, uuid = uuid, group = group, data = readExactly(dataSize.toLong()))
         }
 
         else -> throw IllegalArgumentException("非法的 split 标记: $split")
@@ -73,6 +74,7 @@ fun Sink.writePacket(packet: Packet) {
     val index = packet.index
     val count = packet.size
     require((index == null) == (count == null)) { "分包 index 和总包数必须同时提供" }
+    require(packet.isSplit == (packet.group != null)) { "分包 group 必须且只能在分包时提供" }
     if (index != null && count != null) {
         validateSplit(index, count)
     }
@@ -84,10 +86,11 @@ fun Sink.writePacket(packet: Packet) {
         .write(BuildConfig.MAGIC_BYTES)
         .writeShort(BuildConfig.SCHEMA_VERSION.toInt())
         .writeInt(dataSize.toInt())
+        .write(packet.uuid.toByteArray())
         .writeByte(if (packet.isSplit) IS_SPLIT else NOT_SPLIT)
 
     if (index != null && count != null) {
-        encoded.write(packet.uuid.toByteArray())
+        encoded.write(requireNotNull(packet.group).toByteArray())
         encoded.writeInt(index)
         encoded.writeInt(count)
     }
@@ -98,6 +101,7 @@ fun Sink.writePacket(packet: Packet) {
 
 fun Packet.split(): List<Packet> {
     require(index == null && size == null) { "不能再次拆分一个分包" }
+    require(group == null) { "不能再次拆分一个分包" }
     if (data.size <= MAX_SINGLE_PACKET_DATA_SIZE) {
         return listOf(this)
     }
@@ -105,13 +109,14 @@ fun Packet.split(): List<Packet> {
     val packetCount = ((data.size + MAX_SPLIT_PACKET_DATA_SIZE - 1L) /
             MAX_SPLIT_PACKET_DATA_SIZE).toInt()
     var offset = 0L
+    val group = Uuid.random()
 
     return List(packetCount) { index ->
         val part = Buffer()
         val byteCount = minOf(data.size - offset, MAX_SPLIT_PACKET_DATA_SIZE)
         data.copyTo(part, offset = offset, byteCount = byteCount)
         offset += byteCount
-        Packet(index = index, size = packetCount, uuid = uuid, data = part)
+        Packet(index = index, size = packetCount, group = group, data = part)
     }
 }
 
@@ -125,8 +130,8 @@ fun List<Packet>.merge(): Packet {
 
     require(all(Packet::isSplit)) { "待合并的包必须全部为分包" }
 
-    val uuid = first.uuid
-    require(all { it.uuid == uuid }) { "不能合并 uuid 不同的分包" }
+    val group = requireNotNull(first.group)
+    require(all { it.group == group }) { "不能合并 group 不同的分包" }
 
     val packetCount = requireNotNull(first.size)
     require(all { it.size == packetCount }) { "分包声明的总包数必须一致" }
@@ -142,7 +147,7 @@ fun List<Packet>.merge(): Packet {
         packet.data.copyTo(mergedData)
     }
 
-    return Packet(uuid = uuid, data = mergedData)
+    return Packet(data = mergedData)
 }
 
 private fun Source.readExactly(byteCount: Long): Buffer {
