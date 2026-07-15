@@ -8,30 +8,6 @@ plugins {
     alias(libs.plugins.kotlin.multiplatform)
 }
 
-val nativeTestDirectory = layout.projectDirectory.dir("src/commonTest/native")
-val nativeTestBuildDirectory = nativeTestDirectory.dir("build")
-val nativeTestLibraryName = when {
-    System.getProperty("os.name").lowercase(Locale.ROOT).startsWith("windows") -> "dlloader_test.dll"
-    System.getProperty("os.name").lowercase(Locale.ROOT).startsWith("mac") -> "libdlloader_test.dylib"
-    else -> "libdlloader_test.so"
-}
-val nativeTestLibrary = nativeTestBuildDirectory.file(nativeTestLibraryName)
-
-val configureNativeTestLibrary = tasks.register<Exec>("configureNativeTestLibrary") {
-    workingDir = nativeTestDirectory.asFile
-    inputs.files(fileTree(nativeTestDirectory) { exclude("build/**") })
-    outputs.dir(nativeTestBuildDirectory)
-    commandLine("cmake", "-S", ".", "-B", "build")
-}
-
-val buildNativeTestLibrary = tasks.register<Exec>("buildNativeTestLibrary") {
-    dependsOn(configureNativeTestLibrary)
-    workingDir = nativeTestDirectory.asFile
-    inputs.files(fileTree(nativeTestDirectory) { exclude("build/**") })
-    outputs.file(nativeTestLibrary)
-    commandLine("cmake", "--build", "build", "--config", "Debug")
-}
-
 kotlin {
     macosArm64()
     linuxX64()
@@ -57,7 +33,67 @@ kotlin {
     }
 }
 
+
+
+val processWindowsBuild = tasks.register<Exec>("processWindowsBuild") {
+    onlyIf {
+        System.getProperty("os.name").startsWith("Win")
+    }
+    workingDir = project.file("src/commonTest/native")
+    commandLine(
+        "powershell", "-NoProfile", "-Command",
+        $$"""
+            cmake -S . -B build;
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            cmake --build build --config Debug;
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        """.trimIndent()
+    )
+}
+
+val processLinuxBuild = tasks.register<Exec>("processLinuxBuild") {
+    onlyIf {
+        System.getProperty("os.name").startsWith("Linux")
+    }
+    workingDir = project.file("src/commonTest/native")
+    commandLine(
+        "bash", "-c",
+        """
+            mkdir -p build && \
+            cd build && \
+            cmake .. && \
+            make
+        """.trimIndent()
+    )
+}
+
+val processMacOSBuild = tasks.register<Exec>("processMacOSBuild") {
+    onlyIf {
+        System.getProperty("os.name").startsWith("Mac")
+    }
+    workingDir = project.file("src/commonTest/native")
+    commandLine(
+        "bash", "-c",
+        """
+            mkdir -p build && \
+            cd build && \
+            cmake .. && \
+            make
+        """.trimIndent()
+    )
+}
+
 tasks.withType<KotlinNativeTest>().configureEach {
-    dependsOn(buildNativeTestLibrary)
-    environment("DLLOADER_TEST_LIBRARY_PATH", nativeTestLibrary.asFile.absolutePath)
+    dependsOn(processWindowsBuild,processLinuxBuild,processMacOSBuild)
+
+    val libraryName = providers.systemProperty("os.name")
+        .map {
+            when {
+                it.startsWith("Win") -> "dlloader_test.dll"
+                it.startsWith("Mac") -> "libdlloader_test.dylib"
+                else -> "libdlloader_test.so"
+            }
+        }
+
+    environment("DLLOADER_TEST_LIBRARY_PATH", project.file("src/commonTest/native/build/${libraryName.get()}"))
 }
