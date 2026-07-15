@@ -45,9 +45,12 @@ kotlin {
             implementation(libs.clikt)
             implementation(libs.okio)
 
+            implementation(project(":plugin:protocol"))
+
+            implementation(project(":utils:event-bus"))
             implementation(project(":utils:logger"))
             implementation(project(":utils:pipe"))
-            implementation(project(":plugin:protocol"))
+            implementation(project(":utils:process"))
         }
 
         commonTest.dependencies {
@@ -82,6 +85,8 @@ room3 {
 }
 
 buildConfig {
-    // BuildConfig configuration here.
-    // https://github.com/gmazzo/gradle-buildconfig-plugin#usage-in-kts
+    packageName("top.kagg886.milky.console")
+    className("CoreBuildConfig")
+    buildConfigField("SCHEMA_VERSION_START", 1)
+    buildConfigField("SCHEMA_VERSION_END", 1)
 }
