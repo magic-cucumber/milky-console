@@ -44,9 +44,9 @@ actual fun Process.Companion.create(config: ProcessConfig): Process {
         "workingDirectory is not supported on Unix until a portable posix_spawn chdir file action is available"
     }
 
-    val stdin = config.stdin.takeIf { it == ProcessConfig.IOOptions.Redirected }?.let { IPCAnonymousPipe.Companion.create() }
-    val stdout = config.stdout.takeIf { it == ProcessConfig.IOOptions.Redirected }?.let { IPCAnonymousPipe.Companion.create() }
-    val stderr = config.stderr.takeIf { it == ProcessConfig.IOOptions.Redirected }?.let { IPCAnonymousPipe.Companion.create() }
+    val stdin = config.stdin.takeIf { it == ProcessConfig.IOOptions.Redirected }?.let { IPCAnonymousPipe.create() }
+    val stdout = config.stdout.takeIf { it == ProcessConfig.IOOptions.Redirected }?.let { IPCAnonymousPipe.create() }
+    val stderr = config.stderr.takeIf { it == ProcessConfig.IOOptions.Redirected }?.let { IPCAnonymousPipe.create() }
 
     return try {
         memScoped {

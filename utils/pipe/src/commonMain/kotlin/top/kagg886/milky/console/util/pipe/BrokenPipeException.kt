@@ -7,5 +7,5 @@ package top.kagg886.milky.console.util.pipe
  * ================================================
  */
 
-class BrokenPipeException(override val message: String?, override val cause: Throwable?) :
+class BrokenPipeException(override val message: String?, override val cause: Throwable? = null) :
     okio.IOException(message, cause)

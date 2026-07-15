@@ -1,7 +1,6 @@
 package top.kagg886.milky.console.util.pipe
 
 import okio.Buffer
-import top.kagg886.milky.console.util.pipe.create
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -10,7 +9,7 @@ import kotlin.test.assertTrue
 class PipeTest {
     @Test
     fun transfersBytes() {
-        val pipe = _root_ide_package_.top.kagg886.milky.console.util.pipe.IPCAnonymousPipe.Companion.create()
+        val pipe = IPCAnonymousPipe.create()
         try {
             val source = Buffer().writeUtf8("anonymous pipe")
             val sink = Buffer()
@@ -28,21 +27,27 @@ class PipeTest {
 
     @Test
     fun readDetectsClosedWriteEnd() {
-        val pipe = _root_ide_package_.top.kagg886.milky.console.util.pipe.IPCAnonymousPipe.Companion.create()
+        val pipe = IPCAnonymousPipe.create()
+
+        pipe.sink.write(Buffer().writeInt(1), 4)
         pipe.sink.close()
 
-        assertFailsWith<top.kagg886.milky.console.util.pipe.BrokenPipeException> {
+        assertEquals(4, pipe.source.read(Buffer(), 4))
+        assertEquals(-1, pipe.source.read(Buffer(), 1))
+
+        assertFailsWith<BrokenPipeException> {
             pipe.source.read(Buffer(), 1L)
         }
+
         assertTrue(pipe.source.closed)
     }
 
     @Test
     fun writeDetectsClosedReadEnd() {
-        val pipe = _root_ide_package_.top.kagg886.milky.console.util.pipe.IPCAnonymousPipe.Companion.create()
+        val pipe = IPCAnonymousPipe.create()
         pipe.source.close()
 
-        assertFailsWith<top.kagg886.milky.console.util.pipe.BrokenPipeException> {
+        assertFailsWith<BrokenPipeException> {
             val source = Buffer().writeByte(1)
             pipe.sink.write(source, source.size)
         }

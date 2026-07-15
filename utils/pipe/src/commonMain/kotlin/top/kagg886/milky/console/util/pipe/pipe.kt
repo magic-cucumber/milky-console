@@ -5,8 +5,8 @@ import okio.Source
 
 
 interface IPCAnonymousPipe {
-    val sink: top.kagg886.milky.console.util.pipe.IPCAnonymousPipeSink
-    val source: top.kagg886.milky.console.util.pipe.IPCAnonymousPipeSource
+    val sink: IPCAnonymousPipeSink
+    val source: IPCAnonymousPipeSource
 
     companion object
 }
@@ -16,9 +16,9 @@ interface HasFileDescriptor {
     val closed: Boolean
 }
 
-interface IPCAnonymousPipeSource: Source, top.kagg886.milky.console.util.pipe.HasFileDescriptor
-interface IPCAnonymousPipeSink: Sink, top.kagg886.milky.console.util.pipe.HasFileDescriptor
+interface IPCAnonymousPipeSource: Source, HasFileDescriptor
+interface IPCAnonymousPipeSink: Sink, HasFileDescriptor
 
-expect fun top.kagg886.milky.console.util.pipe.IPCAnonymousPipe.Companion.create(): top.kagg886.milky.console.util.pipe.IPCAnonymousPipe
-expect fun top.kagg886.milky.console.util.pipe.IPCAnonymousPipe.Companion.fromSource(fd: ULong): top.kagg886.milky.console.util.pipe.IPCAnonymousPipeSource
-expect fun top.kagg886.milky.console.util.pipe.IPCAnonymousPipe.Companion.fromSink(fd: ULong): top.kagg886.milky.console.util.pipe.IPCAnonymousPipeSink
+expect fun IPCAnonymousPipe.Companion.create(): IPCAnonymousPipe
+expect fun IPCAnonymousPipe.Companion.fromSource(fd: ULong): IPCAnonymousPipeSource
+expect fun IPCAnonymousPipe.Companion.fromSink(fd: ULong): IPCAnonymousPipeSink

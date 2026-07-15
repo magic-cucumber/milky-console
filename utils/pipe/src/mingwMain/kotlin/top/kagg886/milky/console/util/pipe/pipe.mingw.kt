@@ -86,7 +86,7 @@ private class WindowsPipeSource(fd: ULong) : WindowsPipeEnd(fd), IPCAnonymousPip
 
     override fun read(sink: Buffer, byteCount: Long): Long {
         require(byteCount >= 0L) { "byteCount < 0: $byteCount" }
-        if (closed) return -1L
+        if (closed) throw BrokenPipeException("ReadFile failed: pipe source is closed", null)
         if (byteCount == 0L) return 0L
 
         val initialSize = sink.size
