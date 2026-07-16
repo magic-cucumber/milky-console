@@ -45,6 +45,7 @@ class PluginRegistry(val appBasePath: Path) {
         val impl = Plugin(path)
         log.v { "make: Plugin instance created, starting verify()" }
         if (impl.verify()) {
+            val pluginId = impl.manifest.id
             log.v { "make: verify() succeeded, adding plugin to set" }
             pluginsModifyLock.withLock {
                 _plugins.add(impl)
@@ -52,26 +53,26 @@ class PluginRegistry(val appBasePath: Path) {
             }
 
             scope.launch {
-                log.v { "make: launching handshake() in scope for ${impl.manifest.id}" }
+                log.v { "make: launching handshake() in scope for $pluginId" }
                 if (!impl.handshake(this@PluginRegistry)) {
-                    log.w { "make: handshake() failed for ${impl.manifest.id}, removing plugin" }
+                    log.w { "make: handshake() failed for $pluginId, removing plugin" }
                     pluginsModifyLock.withLock {
                         _plugins.remove(impl)
                     }
                 } else {
-                    log.d { "[group: handshake] handshake() succeeded for ${impl.manifest.id}" }
+                    log.d { "[group: handshake] handshake() succeeded for $pluginId" }
                 }
             }
         } else {
             log.v { "make: verify() failed, plugin will not be added" }
             log.d { "[group: verify] verify() result=false, expected=true, match=false" }
         }
-        log.i { "<<< PluginRegistry.make() exit, plugin=${impl.manifest.id}" }
+        log.i { "<<< PluginRegistry.make() exit" }
         return impl
     }
 
     fun remove(plugin: Plugin) {
-        log.i { ">>> PluginRegistry.remove(plugin=${plugin.manifest.id}) enter" }
+        log.i { ">>> PluginRegistry.remove() enter" }
         log.v { "remove: checking if plugin state is Closed" }
         if (plugin.state.value is Plugin.State.Closed) {
             _plugins.remove(plugin)

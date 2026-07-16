@@ -20,25 +20,26 @@ import top.kagg886.milky.console.util.raceN
 private val log = Logger.withTag("WaitClose")
 
 fun Plugin.waitCloseJob(registry: PluginRegistry): Job {
-    log.i { ">>> Plugin.waitCloseJob() enter, pluginId=${manifest.id}" }
+    val pluginId = manifest.id
+    log.i { ">>> Plugin.waitCloseJob() enter, pluginId=$pluginId" }
     log.d { "[group: close-job] creating LAZY coroutine for close-await" }
 
     return registry.scope.launch(start = CoroutineStart.LAZY) {
-        log.i { ">>> waitCloseJob coroutine enter, pluginId=${manifest.id}" }
+        log.i { ">>> waitCloseJob coroutine enter, pluginId=$pluginId" }
         log.v { "waitCloseJob: racing PluginClosed, HostClose, and process exit" }
         val exited = raceN(
             {
                 log.v { "race: waiting for PluginClosed event from plugin" }
                 EventBus
                     .subscribe<PluginInboundEvent>()
-                    .first { it.pluginId == manifest.id && it.event is PluginClosed }
+                    .first { it.pluginId == pluginId && it.event is PluginClosed }
                 log.v { "race: PluginClosed event received" }
                 null
             },
             {
                 log.v { "race: waiting for HostClose event from host" }
                 EventBus.subscribe<Pair<String, MilkyConsoleFromEvent.FromHost>>()
-                    .first { (id, event) -> id == manifest.id && event is HostClose }
+                    .first { (id, event) -> id == pluginId && event is HostClose }
                 log.v { "race: HostClose event received" }
                 null
             },
@@ -71,10 +72,10 @@ fun Plugin.waitCloseJob(registry: PluginRegistry): Job {
                 error("unexpected exit status $status")
             }
         }
-        log.d { "[group: state-transition] plugin ${manifest.id} state -> Closed" }
+        log.d { "[group: state-transition] plugin $pluginId state -> Closed" }
 
         registry.remove(this@waitCloseJob)
         log.v { "waitCloseJob: plugin removed from registry" }
-        log.i { "<<< waitCloseJob coroutine exit, pluginId=${manifest.id}" }
+        log.i { "<<< waitCloseJob coroutine exit, pluginId=$pluginId" }
     }
 }

@@ -54,12 +54,10 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     log.i { "[step 3/7] starting sender coroutine (FromPlugin -> pipe)" }
 
     suspend fun writeEvent(event: MilkyConsoleFromEvent.FromPlugin) {
-        log.v { "writeEvent() writing event of type=${event::class.simpleName}" }
         event.toPacket().forEach { packet ->
             sink.writePacket(packet)
             yield()
         }
-        log.d { "[group: pipe-write] event ${event::class.simpleName} written to pipe sink" }
     }
 
     val sender = launch(start = CoroutineStart.UNDISPATCHED) {
@@ -110,6 +108,14 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     }
     log.d { "[group: coroutine-start] receiver launched" }
 
+    suspend fun rejectHandshake(message: String) {
+        EventBus.post(PluginHandshakeResult.Rejected(message))
+        yield()
+        sink.close()
+        source.close()
+        exit(1)
+    }
+
     // -------------------- 5. 握手 --------------------
     log.i { "[step 5/7] handshake phase: awaiting HostHandshakeRequest" }
     val handshakeRequest = async(start = CoroutineStart.UNDISPATCHED) {
@@ -130,10 +136,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     if (!handshakeRequest.await()) {
         log.w { "Handshake rejected: did not receive HostHandshakeRequest within 10s" }
-        EventBus.post(PluginHandshakeResult.Rejected("10秒内没有收到握手包，取消握手"))
-        yield()
-        sender.cancel()
-        receiver.cancel()
+        rejectHandshake("10秒内没有收到握手包，取消握手")
         log.i { "<<< loader::main() exit (handshake timeout)" }
         return@runBlocking
     }
@@ -155,10 +158,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         result.pointed
     } catch (e: Exception) {
         log.e { "Failed to find plugin entry function: ${e.message}" }
-        EventBus.post(PluginHandshakeResult.Rejected("无法查找到插件加载函数: ${e.message}"))
-        yield()
-        sender.cancel()
-        receiver.cancel()
+        rejectHandshake("无法查找到插件加载函数: ${e.message}")
         log.i { "<<< loader::main() exit (plugin symbol lookup failed)" }
         return@runBlocking
     }
@@ -166,10 +166,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     if (api.abi_version != MILKY_CONSOLE_HOST_ABI_VERSION) {
         log.e { "plugin ABI mismatch: expected=$MILKY_CONSOLE_HOST_ABI_VERSION, actual=${api.abi_version}" }
-        EventBus.post(PluginHandshakeResult.Rejected("插件ABI不匹配。本加载器期望: ${MILKY_CONSOLE_HOST_ABI_VERSION}，该插件的ABI为${api.abi_version}"))
-        yield()
-        sender.cancel()
-        receiver.cancel()
+        rejectHandshake("插件ABI不匹配。本加载器期望: ${MILKY_CONSOLE_HOST_ABI_VERSION}，该插件的ABI为${api.abi_version}")
         log.i { "<<< loader::main() exit (ABI mismatch)" }
         return@runBlocking
     }
@@ -177,14 +174,18 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     if (api.struct_size < sizeOf<milky_console_plugin_api>().toUInt()) {
         log.e { "plugin struct_size too small: expected >= ${sizeOf<milky_console_plugin_api>()}, got ${api.struct_size}" }
-        EventBus.post(PluginHandshakeResult.Rejected("插件API不匹配。"))
-        yield()
-        sender.cancel()
-        receiver.cancel()
+        rejectHandshake("插件API不匹配。")
         log.i { "<<< loader::main() exit (struct_size mismatch)" }
         return@runBlocking
     }
     log.v { "struct_size check passed (expected <= ${sizeOf<milky_console_plugin_api>()})" }
+
+    if (api.on_load == null) {
+        log.e { "plugin API does not provide on_load" }
+        rejectHandshake("插件API缺少 on_load")
+        log.i { "<<< loader::main() exit (on_load missing)" }
+        return@runBlocking
+    }
 
     //构造api
     log.i { "allocating hostApi and setting up send_message callback" }
@@ -208,17 +209,14 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     log.i { "calling plugin on_load(config, hostApi)" }
     val onLoadResult = memScoped {
-        api.on_load?.invoke(config.cstr.getPointer(this), hostApi)
+        api.on_load!!.invoke(config.cstr.getPointer(this), hostApi)
     }
     log.v { "on_load returned: $onLoadResult (expected $MILKY_TRUE)" }
     log.d { "[group: on-load] result=$onLoadResult, expected=$MILKY_TRUE, match=${onLoadResult == MILKY_TRUE}" }
 
     if (onLoadResult == MILKY_FALSE) {
         log.e { "plugin on_load returned MILKY_FALSE, initialization failed" }
-        EventBus.post(PluginHandshakeResult.Rejected("插件初始化失败"))
-        yield()
-        sender.cancel()
-        receiver.cancel()
+        rejectHandshake("插件初始化失败")
         log.i { "<<< loader::main() exit (on_load failed)" }
         return@runBlocking
     }

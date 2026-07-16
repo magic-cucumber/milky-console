@@ -2,6 +2,7 @@
 
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest
+import org.gradle.api.Transformer
 import org.gradle.api.file.RegularFile
 import org.gradle.api.tasks.Sync
 import java.util.Locale
@@ -101,6 +102,12 @@ data class PluginLoaderTestTarget(
     val loaderExecutable: String,
 )
 
+data class PluginLoaderFileNameTransformer(
+    val loaderExecutable: String,
+) : Transformer<String?, String> {
+    override fun transform(fileName: String): String? = loaderExecutable
+}
+
 val nativePluginProjects = file("src/commonTest/native")
     .listFiles()
     .orEmpty()
@@ -170,7 +177,7 @@ val preparePluginLoaderTestContainer = tasks.register<Sync>("preparePluginLoader
         }
     }
     from(pluginLoaderTestTarget.loaderBinary) {
-        rename { pluginLoaderTestTarget.loaderExecutable }
+        rename(PluginLoaderFileNameTransformer(pluginLoaderTestTarget.loaderExecutable))
     }
     into(pluginLoaderTestContainerDirectory)
 }
