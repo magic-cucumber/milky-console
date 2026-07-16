@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -22,9 +23,8 @@ import top.kagg886.milky.console.plugin.PluginRegistry
 import top.kagg886.milky.console.plugin.config
 import top.kagg886.milky.console.plugin.libpath
 import top.kagg886.milky.console.plugin.manifest
-import top.kagg886.milky.console.protocol.ClientHandshakeResult
-import top.kagg886.milky.console.protocol.ClientHandshakeRequest
-import top.kagg886.milky.console.protocol.MilkyConsoleEvent
+import top.kagg886.milky.console.protocol.HostHandshakeRequest
+import top.kagg886.milky.console.protocol.PluginHandshakeResult
 import top.kagg886.milky.console.util.eventbus.EventBus
 import top.kagg886.milky.console.util.eventbus.LRUCache
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipe
@@ -84,32 +84,38 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
         }
     }
 
-    val result: ClientHandshakeResult = raceN(
+    val result: PluginHandshakeResult = raceN(
         {
             when (val exit = progress.await()) {
-                Process.ExitStatus.Killed -> ClientHandshakeResult.Failed("进程被意外杀死")
-                is Process.ExitStatus.Result -> ClientHandshakeResult.Failed("进程意外退出。${exit.exitCode}")
+                Process.ExitStatus.Killed -> PluginHandshakeResult.Rejected("进程被意外杀死")
+                is Process.ExitStatus.Result -> PluginHandshakeResult.Rejected("进程意外退出。${exit.exitCode}")
             }
         },
         {
-            val handshakeResult = registry.scope.async(start = CoroutineStart.UNDISPATCHED) {
-                EventBus.subscribe<Pair<String, MilkyConsoleEvent>>()
-                    .first { (id, event) -> id == pluginId && event is ClientHandshakeResult }
-                    .second as ClientHandshakeResult
-            }
+            coroutineScope {
+                val handshakeResult = async(start = CoroutineStart.UNDISPATCHED) {
+                    EventBus.subscribe<PluginInboundEvent>()
+                        .first { it.pluginId == pluginId && it.event is PluginHandshakeResult }
+                        .event as PluginHandshakeResult
+                }
 
-            //握手请求包
-            EventBus.post(pluginId to ClientHandshakeRequest)
+                try {
+                    //握手请求包
+                    EventBus.post(pluginId to HostHandshakeRequest)
 
-            //等待子进程完成握手
-            val result = withTimeoutOrNull(10.seconds) {
-                handshakeResult.await()
+                    //等待子进程完成握手
+                    withTimeoutOrNull(10.seconds) {
+                        handshakeResult.await()
+                    }
+                } finally {
+                    handshakeResult.cancel()
+                }
             }
-            result ?: ClientHandshakeResult.Failed("握手超时")
+                ?: PluginHandshakeResult.Rejected("握手超时")
         }
     )
 
-    if (result is ClientHandshakeResult.Failed) {
+    if (result is PluginHandshakeResult.Rejected) {
         sendPipeJob.cancel()
         receivePipeJob.cancel()
         send.close()

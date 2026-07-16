@@ -34,13 +34,13 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     //握手
     val handshakeRequest = async(start = CoroutineStart.UNDISPATCHED) {
         val result = withTimeoutOrNull(10.seconds) {
-            EventBus.subscribe<ClientHandshakeRequest>().first()
+            EventBus.subscribe<HostHandshakeRequest>().first()
             true
         }
         result ?: false
     }
 
-    suspend fun writeEvent(event: MilkyConsoleEvent) {
+    suspend fun writeEvent(event: MilkyConsoleFromEvent.FromPlugin) {
         event.toPacket().forEach { packet ->
             //write packet 非挂起。主动yield挂起实现乱序发送
             sink.writePacket(packet)
@@ -49,7 +49,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     }
 
     val sender = launch(start = CoroutineStart.UNDISPATCHED) {
-        EventBus.subscribe<MilkyConsoleEvent>().collect(::writeEvent)
+        EventBus.subscribe<MilkyConsoleFromEvent.FromPlugin>().collect(::writeEvent)
     }
     val receiver = launch(start = CoroutineStart.UNDISPATCHED) {
         val packetsByGroup = LRUCache.create<Uuid, List<Packet>>(1.minutes, 16 * 1024 * 1024) { _, packets ->
@@ -77,12 +77,12 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
             } else {
                 packet
             }
-            EventBus.post(mergedPacket.data.readContent<MilkyConsoleEvent>())
+            EventBus.post(mergedPacket.data.readContent<MilkyConsoleFromEvent.FromHost>())
         }
     }
 
     if (!handshakeRequest.await()) {
-        EventBus.post(ClientHandshakeResult.Failed("10秒内没有收到握手包，取消握手"))
+        EventBus.post(PluginHandshakeResult.Rejected("10秒内没有收到握手包，取消握手"))
         yield()
         sender.cancel()
         receiver.cancel()
@@ -99,7 +99,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         }
         result.pointed
     } catch (e: Exception) {
-        EventBus.post(ClientHandshakeResult.Failed("无法查找到插件加载函数: ${e.message}"))
+        EventBus.post(PluginHandshakeResult.Rejected("无法查找到插件加载函数: ${e.message}"))
         yield()
         sender.cancel()
         receiver.cancel()
@@ -107,7 +107,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     }
 
     if (api.abi_version != MILKY_CONSOLE_HOST_ABI_VERSION) {
-        EventBus.post(ClientHandshakeResult.Failed("插件ABI不匹配。本加载器期望: ${MILKY_CONSOLE_HOST_ABI_VERSION}，该插件的ABI为${api.abi_version}"))
+        EventBus.post(PluginHandshakeResult.Rejected("插件ABI不匹配。本加载器期望: ${MILKY_CONSOLE_HOST_ABI_VERSION}，该插件的ABI为${api.abi_version}"))
         yield()
         sender.cancel()
         receiver.cancel()
@@ -115,7 +115,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     }
 
     if (api.struct_size < sizeOf<milky_console_plugin_api>().toUInt()) {
-        EventBus.post(ClientHandshakeResult.Failed("插件API不匹配。"))
+        EventBus.post(PluginHandshakeResult.Rejected("插件API不匹配。"))
         yield()
         sender.cancel()
         receiver.cancel()
@@ -129,7 +129,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     hostApi.pointed.send_message = staticCFunction { message ->
         val message = message?.toKString() ?: return@staticCFunction MILKY_RESULT_INVALID_ARGUMENT
         val event = try {
-            ProtocolEvent(milkyJsonModule.decodeFromString(message))
+            PluginEvent(milkyJsonModule.decodeFromString(message))
         } catch (_: Exception) {
             return@staticCFunction MILKY_RESULT_INVALID_ARGUMENT
         }
@@ -141,15 +141,12 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     }
 
     if (onLoadResult == MILKY_FALSE) {
-        EventBus.post(ClientHandshakeResult.Failed("插件初始化失败"))
+        EventBus.post(PluginHandshakeResult.Rejected("插件初始化失败"))
         yield()
         sender.cancel()
         receiver.cancel()
         return@runBlocking
     }
-
-    EventBus.post(ClientHandshakeResult.Success)
-    yield()
 
     //消息循环
     var handshakeSuccess = false
@@ -157,7 +154,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     val ex = try {
         coroutineScope {
             launch(start = CoroutineStart.UNDISPATCHED) {
-                EventBus.subscribe<ProtocolEvent>().collect { message ->
+                EventBus.subscribe<HostEvent>().collect { message ->
                     memScoped {
                         api.on_message?.invoke(milkyJsonModule.encodeToString(message.event).cstr.getPointer(this))
                     }
@@ -165,12 +162,12 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
             }
 
             launch(start = CoroutineStart.UNDISPATCHED) {
-                EventBus.subscribe<ClientClosed>().collect { message ->
+                EventBus.subscribe<HostClose>().collect { message ->
                     closedByHost = true
-                    this@coroutineScope.cancel(CancellationException(message.message))
+                    this@coroutineScope.cancel(CancellationException(message.reason))
                 }
             }
-            EventBus.post(ClientHandshakeResult.Success)
+            EventBus.post(PluginHandshakeResult.Ready)
             handshakeSuccess = true
         }
         null
@@ -180,7 +177,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     if (handshakeSuccess && !closedByHost) {
         val error = ex?.cause ?: ex
-        EventBus.post(ClientClosed(error?.message ?: "插件客户端已关闭", error?.stackTraceToString()))
+        EventBus.post(PluginClosed(error?.message ?: "插件客户端已关闭", error?.stackTraceToString()))
         yield()
     }
 

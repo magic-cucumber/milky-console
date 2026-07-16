@@ -9,7 +9,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import top.kagg886.milky.console.plugin.Plugin
 import top.kagg886.milky.console.plugin.PluginRegistry
 import top.kagg886.milky.console.plugin.manifest
-import top.kagg886.milky.console.protocol.MilkyConsoleEvent
+import top.kagg886.milky.console.protocol.MilkyConsoleFromEvent
 import top.kagg886.milky.console.util.eventbus.EventBus
 import top.kagg886.milky.console.util.eventbus.LRUCache
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipe
@@ -24,6 +24,11 @@ import top.kagg886.milky.console.util.protocol.writePacket
 import top.kagg886.milky.console.util.readContent
 import kotlin.time.Duration.Companion.minutes
 import kotlin.uuid.Uuid
+
+data class PluginInboundEvent(
+    val pluginId: String,
+    val event: MilkyConsoleFromEvent.FromPlugin,
+)
 
 /**
  * ================================================
@@ -41,7 +46,7 @@ fun Plugin.startPipeJob(
     val pluginId = manifest.id
 
     val sendPipeJob = registry.scope.launch(start = CoroutineStart.UNDISPATCHED) {
-        EventBus.subscribe<Pair<String, MilkyConsoleEvent>>()
+        EventBus.subscribe<Pair<String, MilkyConsoleFromEvent.FromHost>>()
             .filter { (id, _) -> id == pluginId }
             .collect { (_, event) ->
                 event.toPacket().forEach { packet ->
@@ -74,7 +79,12 @@ fun Plugin.startPipeJob(
             } else {
                 packet
             }
-            EventBus.post(pluginId to mergedPacket.data.readContent<MilkyConsoleEvent>())
+            EventBus.post(
+                PluginInboundEvent(
+                    pluginId,
+                    mergedPacket.data.readContent<MilkyConsoleFromEvent.FromPlugin>(),
+                )
+            )
         }
     }
 

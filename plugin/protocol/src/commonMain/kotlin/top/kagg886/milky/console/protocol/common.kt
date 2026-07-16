@@ -1,14 +1,20 @@
 package top.kagg886.milky.console.protocol
 
+import kotlinx.serialization.Polymorphic
 import kotlinx.serialization.Serializable
-import org.ntqqrev.milky.Event
 
 /**
  * ================================================
  * Author:     iveou
- * Created on: 2026/7/16 11:21
+ * Created on: 2026/7/16 13:41
  * ================================================
  */
 
 @Serializable
-data class ProtocolEvent(val event: Event) : MilkyConsoleEvent
+sealed interface MilkyConsoleFromEvent {
+    @Polymorphic
+    interface FromPlugin : MilkyConsoleFromEvent
+
+    @Polymorphic
+    interface FromHost : MilkyConsoleFromEvent
+}

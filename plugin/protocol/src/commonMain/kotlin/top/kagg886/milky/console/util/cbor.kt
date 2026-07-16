@@ -9,11 +9,13 @@ import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.polymorphic
 import kotlinx.serialization.modules.subclass
 import okio.Buffer
-import top.kagg886.milky.console.protocol.ClientClosed
-import top.kagg886.milky.console.protocol.ClientHandshakeRequest
-import top.kagg886.milky.console.protocol.ClientHandshakeResult
-import top.kagg886.milky.console.protocol.MilkyConsoleEvent
-import top.kagg886.milky.console.protocol.ProtocolEvent
+import top.kagg886.milky.console.protocol.HostClose
+import top.kagg886.milky.console.protocol.HostEvent
+import top.kagg886.milky.console.protocol.HostHandshakeRequest
+import top.kagg886.milky.console.protocol.MilkyConsoleFromEvent
+import top.kagg886.milky.console.protocol.PluginClosed
+import top.kagg886.milky.console.protocol.PluginEvent
+import top.kagg886.milky.console.protocol.PluginHandshakeResult
 
 /**
  * ================================================
@@ -25,12 +27,16 @@ import top.kagg886.milky.console.protocol.ProtocolEvent
 @OptIn(ExperimentalSerializationApi::class)
 val MilkyConsoleCbor = Cbor {
     serializersModule = SerializersModule {
-        polymorphic(MilkyConsoleEvent::class) {
-            subclass(ClientHandshakeRequest::class)
-            subclass(ClientHandshakeResult.Success::class)
-            subclass(ClientHandshakeResult.Failed::class)
-            subclass(ProtocolEvent::class)
-            subclass(ClientClosed::class)
+        polymorphic(MilkyConsoleFromEvent.FromHost::class) {
+            subclass(HostHandshakeRequest::class)
+            subclass(HostEvent::class)
+            subclass(HostClose::class)
+        }
+        polymorphic(MilkyConsoleFromEvent.FromPlugin::class) {
+            subclass(PluginHandshakeResult.Ready::class)
+            subclass(PluginHandshakeResult.Rejected::class)
+            subclass(PluginEvent::class)
+            subclass(PluginClosed::class)
         }
     }
 }

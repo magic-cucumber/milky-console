@@ -2,21 +2,16 @@ package top.kagg886.milky.console.protocol
 
 import kotlinx.serialization.Serializable
 
-/**
- * ================================================
- * Author:     886kagg
- * Created on: 2026/7/15 21:47
- * ================================================
- */
-
+/** Host starts a handshake after the loader process and both pipes are ready. */
 @Serializable
-data object ClientHandshakeRequest : MilkyConsoleEvent
+data object HostHandshakeRequest : MilkyConsoleFromEvent.FromHost
 
+/** Loader reports the only terminal result of a handshake attempt. */
 @Serializable
-sealed interface ClientHandshakeResult : MilkyConsoleEvent {
+sealed interface PluginHandshakeResult : MilkyConsoleFromEvent.FromPlugin {
+    @Serializable
+    data object Ready : PluginHandshakeResult
 
-    data object Success : ClientHandshakeResult
-    data class Failed(val message: String) : ClientHandshakeResult
+    @Serializable
+    data class Rejected(val message: String) : PluginHandshakeResult
 }
-@Serializable
-data class ClientClosed(val message: String,val stacktrace: String? = null): MilkyConsoleEvent
