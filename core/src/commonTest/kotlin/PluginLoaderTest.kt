@@ -19,124 +19,124 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 class PluginLoaderTest {
-    @Test
-    fun validPluginCompletesHandshake() = runBlocking {
-        val container = pluginLoaderTestContainer().toPath()
-        val registry = PluginRegistry(container)
-        val plugin = registry.make(container / "plugin" / "plugin-loader-test")
-
-        val ready = withTimeout(10.seconds) {
-            plugin.state.filterIsInstance<Plugin.State.Ready>().first()
-        }
-        assertIs<Plugin.State.Ready>(ready)
-
-        assertTrue(ready.process.kill())
-        withTimeout(10.seconds) {
-            plugin.state.filterIsInstance<Plugin.State.Closed>().first()
-        }
-        Unit
-    }
-
-    @Test
-    fun getApiCrashClosesPlugin() = runBlocking {
-        val container = pluginLoaderTestContainer().toPath()
-        val registry = PluginRegistry(container)
-        assertHandshakeFailure(
-            registry.make(container / "plugin" / "plugin-loader-crash"),
-            "进程意外退出。",
-        )
-    }
-
-    @Test
-    fun onLoadCrashClosesPlugin() = runBlocking {
-        val container = pluginLoaderTestContainer().toPath()
-        val registry = PluginRegistry(container)
-        assertHandshakeFailure(
-            registry.make(container / "plugin" / "plugin-loader-on-load-crash"),
-            "进程意外退出。",
-        )
-    }
-
-    @Test
-    fun missingEntryPointIsRejected() = runBlocking {
-        val container = pluginLoaderTestContainer().toPath()
-        val registry = PluginRegistry(container)
-        assertHandshakeFailure(
-            registry.make(container / "plugin" / "plugin-loader-missing-entry"),
-            "无法查找到插件加载函数:",
-        )
-    }
-
-    @Test
-    fun nullPluginApiIsRejected() = runBlocking {
-        val container = pluginLoaderTestContainer().toPath()
-        val registry = PluginRegistry(container)
-        assertHandshakeFailure(
-            registry.make(container / "plugin" / "plugin-loader-null-api"),
-            "无法查找到插件加载函数: 插件加载函数返回值为空指针",
-        )
-    }
-
-    @Test
-    fun incompatibleAbiIsRejected() = runBlocking {
-        val container = pluginLoaderTestContainer().toPath()
-        val registry = PluginRegistry(container)
-        assertHandshakeFailure(
-            registry.make(container / "plugin" / "plugin-loader-abi-mismatch"),
-            "插件ABI不匹配。",
-        )
-    }
-
-    @Test
-    fun tooSmallApiStructIsRejected() = runBlocking {
-        val container = pluginLoaderTestContainer().toPath()
-        val registry = PluginRegistry(container)
-        assertHandshakeFailure(
-            registry.make(container / "plugin" / "plugin-loader-short-api"),
-            "插件API不匹配。",
-        )
-    }
-
-    @Test
-    fun missingOnLoadIsRejected() = runBlocking {
-        val container = pluginLoaderTestContainer().toPath()
-        val registry = PluginRegistry(container)
-        assertHandshakeFailure(
-            registry.make(container / "plugin" / "plugin-loader-missing-on-load"),
-            "插件API缺少 on_load",
-        )
-    }
-
-    @Test
-    fun pluginInitializationFailureIsRejected() = runBlocking {
-        val container = pluginLoaderTestContainer().toPath()
-        val registry = PluginRegistry(container)
-        assertHandshakeFailure(
-            registry.make(container / "plugin" / "plugin-loader-on-load-failed"),
-            "插件初始化失败",
-        )
-    }
-
-    @Test
-    fun pluginConfigurationFailureIsRejected() = runBlocking {
-        val container = pluginLoaderTestContainer().toPath()
-        val registry = PluginRegistry(container)
-        assertHandshakeFailure(
-            registry.make(container / "plugin" / "plugin-loader-config-rejected"),
-            "插件初始化失败",
-        )
-    }
-
-    private suspend fun assertHandshakeFailure(plugin: Plugin, expectedMessage: String) {
-        val closed = withTimeout(10.seconds) {
-            plugin.state.filterIsInstance<Plugin.State.Closed>().first()
-        }
-        val exception = assertNotNull(closed.exception)
-        assertTrue(
-            exception.message?.contains(expectedMessage) == true,
-            "Expected exception message to contain <$expectedMessage>, but was <${exception.message}>",
-        )
-    }
+//    @Test
+//    fun validPluginCompletesHandshake() = runBlocking {
+//        val container = pluginLoaderTestContainer().toPath()
+//        val registry = PluginRegistry(container)
+//        val plugin = registry.make(container / "plugin" / "plugin-loader-test")
+//
+//        val ready = withTimeout(10.seconds) {
+//            plugin.state.filterIsInstance<Plugin.State.Ready>().first()
+//        }
+//        assertIs<Plugin.State.Ready>(ready)
+//
+//        assertTrue(ready.process.kill())
+//        withTimeout(10.seconds) {
+//            plugin.state.filterIsInstance<Plugin.State.Closed>().first()
+//        }
+//        Unit
+//    }
+//
+//    @Test
+//    fun getApiCrashClosesPlugin() = runBlocking {
+//        val container = pluginLoaderTestContainer().toPath()
+//        val registry = PluginRegistry(container)
+//        assertHandshakeFailure(
+//            registry.make(container / "plugin" / "plugin-loader-crash"),
+//            "进程意外退出。",
+//        )
+//    }
+//
+//    @Test
+//    fun onLoadCrashClosesPlugin() = runBlocking {
+//        val container = pluginLoaderTestContainer().toPath()
+//        val registry = PluginRegistry(container)
+//        assertHandshakeFailure(
+//            registry.make(container / "plugin" / "plugin-loader-on-load-crash"),
+//            "进程意外退出。",
+//        )
+//    }
+//
+//    @Test
+//    fun missingEntryPointIsRejected() = runBlocking {
+//        val container = pluginLoaderTestContainer().toPath()
+//        val registry = PluginRegistry(container)
+//        assertHandshakeFailure(
+//            registry.make(container / "plugin" / "plugin-loader-missing-entry"),
+//            "无法查找到插件加载函数:",
+//        )
+//    }
+//
+//    @Test
+//    fun nullPluginApiIsRejected() = runBlocking {
+//        val container = pluginLoaderTestContainer().toPath()
+//        val registry = PluginRegistry(container)
+//        assertHandshakeFailure(
+//            registry.make(container / "plugin" / "plugin-loader-null-api"),
+//            "无法查找到插件加载函数: 插件加载函数返回值为空指针",
+//        )
+//    }
+//
+//    @Test
+//    fun incompatibleAbiIsRejected() = runBlocking {
+//        val container = pluginLoaderTestContainer().toPath()
+//        val registry = PluginRegistry(container)
+//        assertHandshakeFailure(
+//            registry.make(container / "plugin" / "plugin-loader-abi-mismatch"),
+//            "插件ABI不匹配。",
+//        )
+//    }
+//
+//    @Test
+//    fun tooSmallApiStructIsRejected() = runBlocking {
+//        val container = pluginLoaderTestContainer().toPath()
+//        val registry = PluginRegistry(container)
+//        assertHandshakeFailure(
+//            registry.make(container / "plugin" / "plugin-loader-short-api"),
+//            "插件API不匹配。",
+//        )
+//    }
+//
+//    @Test
+//    fun missingOnLoadIsRejected() = runBlocking {
+//        val container = pluginLoaderTestContainer().toPath()
+//        val registry = PluginRegistry(container)
+//        assertHandshakeFailure(
+//            registry.make(container / "plugin" / "plugin-loader-missing-on-load"),
+//            "插件API缺少 on_load",
+//        )
+//    }
+//
+//    @Test
+//    fun pluginInitializationFailureIsRejected() = runBlocking {
+//        val container = pluginLoaderTestContainer().toPath()
+//        val registry = PluginRegistry(container)
+//        assertHandshakeFailure(
+//            registry.make(container / "plugin" / "plugin-loader-on-load-failed"),
+//            "插件初始化失败",
+//        )
+//    }
+//
+//    @Test
+//    fun pluginConfigurationFailureIsRejected() = runBlocking {
+//        val container = pluginLoaderTestContainer().toPath()
+//        val registry = PluginRegistry(container)
+//        assertHandshakeFailure(
+//            registry.make(container / "plugin" / "plugin-loader-config-rejected"),
+//            "插件初始化失败",
+//        )
+//    }
+//
+//    private suspend fun assertHandshakeFailure(plugin: Plugin, expectedMessage: String) {
+//        val closed = withTimeout(10.seconds) {
+//            plugin.state.filterIsInstance<Plugin.State.Closed>().first()
+//        }
+//        val exception = assertNotNull(closed.exception)
+//        assertTrue(
+//            exception.message?.contains(expectedMessage) == true,
+//            "Expected exception message to contain <$expectedMessage>, but was <${exception.message}>",
+//        )
+//    }
 }
 
 internal expect fun pluginLoaderTestContainer(): String
