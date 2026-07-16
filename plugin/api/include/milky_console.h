@@ -2,58 +2,157 @@
 #define MILKY_CONSOLE_H
 
 #include <stddef.h>
-#include <stdint.h>
 
+/*
+ * Symbol visibility
+ */
 #if defined(_WIN32)
 #  if defined(MILKY_CONSOLE_BUILDING_LIBRARY)
 #    define MILKY_CONSOLE_EXPORT __declspec(dllexport)
 #  else
 #    define MILKY_CONSOLE_EXPORT __declspec(dllimport)
 #  endif
+#  define MILKY_CONSOLE_CALL __cdecl
 #else
 #  define MILKY_CONSOLE_EXPORT __attribute__((visibility("default")))
+#  define MILKY_CONSOLE_CALL
+#endif
+
+/*
+ * Optional compiler annotations
+ */
+#if defined(__GNUC__) || defined(__clang__)
+#  define MILKY_CONSOLE_NODISCARD __attribute__((warn_unused_result))
+#  define MILKY_CONSOLE_NONNULL(...) __attribute__((nonnull(__VA_ARGS__)))
+#else
+#  define MILKY_CONSOLE_NODISCARD
+#  define MILKY_CONSOLE_NONNULL(...)
 #endif
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef int32_t milky_bool_t;
+/*
+ * API primitive types. All supported targets use 32-bit int and unsigned int;
+ * these fundamental C types map directly to common Kotlin Int and UInt.
+ */
+typedef int milky_bool_t;
+typedef int milky_result_t;
 
+#define MILKY_FALSE ((milky_bool_t)0)
+#define MILKY_TRUE  ((milky_bool_t)1)
 
-#define MILKY_CONSOLE_HOST_ABI_VERSION 1u
+/*
+ * Common result codes
+ */
+#define MILKY_RESULT_OK                ((milky_result_t)0)
+#define MILKY_RESULT_INVALID_ARGUMENT  ((milky_result_t)-1)
+#define MILKY_RESULT_UNSUPPORTED       ((milky_result_t)-2)
+#define MILKY_RESULT_INTERNAL_ERROR    ((milky_result_t)-3)
+
+/*
+ * ABI versions
+ *
+ * Increment the ABI version only when compatibility cannot be preserved.
+ * Compatible extensions should append fields to the end of the relevant
+ * structure and update its corresponding *_SIZE constant.
+ */
+#define MILKY_CONSOLE_HOST_ABI_VERSION   1u
 #define MILKY_CONSOLE_PLUGIN_ABI_VERSION 1u
 
+/*
+ * Host API
+ *
+ * The host owns this structure and all function pointers contained in it.
+ * The plugin must not modify or free it.
+ *
+ * New members may only be appended to the end of this structure.
+ */
 typedef struct milky_console_host_api {
-    uint32_t abi_version;
-    uint32_t struct_size;
-    int32_t (*send_message)(const char *body);
+    unsigned int abi_version;
+    unsigned int struct_size;
+
+    /*
+     * Sends a null-terminated UTF-8 string to the host.
+     *
+     * message must not be NULL. Its data only needs to remain valid for the
+     * duration of the call.
+     */
+    milky_result_t (MILKY_CONSOLE_CALL *send_message)(const char *message);
 } milky_console_host_api_t;
 
 #define MILKY_CONSOLE_HOST_API_V1_SIZE \
-    (offsetof(milky_console_host_api_t, send_message) + sizeof(((milky_console_host_api_t *)0)->send_message))
+    (offsetof(milky_console_host_api_t, send_message) + \
+     sizeof(((milky_console_host_api_t *)0)->send_message))
 
+/*
+ * Plugin API
+ *
+ * The plugin owns the returned structure. It must remain valid and unchanged
+ * until the plugin dynamic library is unloaded.
+ *
+ * New members may only be appended to the end of this structure.
+ */
 typedef struct milky_console_plugin_api {
-    uint32_t abi_version;
-    uint32_t struct_size;
+    unsigned int abi_version;
+    unsigned int struct_size;
 
-    milky_bool_t (*on_load)(
+    /*
+     * Initializes the plugin.
+     *
+     * config_json may be NULL. When non-NULL, it points to a null-terminated
+     * UTF-8 JSON string.
+     *
+     * host_api must remain valid until on_unload returns.
+     *
+     * Returns MILKY_TRUE on success and MILKY_FALSE on failure.
+     */
+    milky_bool_t (MILKY_CONSOLE_CALL *on_load)(
         const char *config_json,
         const milky_console_host_api_t *host_api
     );
-    int32_t (*on_unload)(void);
-    void (*on_message)(const char *body);
+
+    /*
+     * Shuts down the plugin.
+     *
+     * The plugin must stop using host_api before this function returns.
+     */
+    milky_result_t (MILKY_CONSOLE_CALL *on_unload)(void);
+
+    /*
+     * Delivers a null-terminated UTF-8 string to the plugin.
+     *
+     * message must not be NULL and is only guaranteed to remain valid for the
+     * duration of the call.
+     */
+    void (MILKY_CONSOLE_CALL *on_message)(const char *message);
 } milky_console_plugin_api_t;
 
 #define MILKY_CONSOLE_PLUGIN_API_V1_SIZE \
-    (offsetof(milky_console_plugin_api_t, on_message) + sizeof(((milky_console_plugin_api_t *)0)->on_message))
+    (offsetof(milky_console_plugin_api_t, on_message) + \
+     sizeof(((milky_console_plugin_api_t *)0)->on_message))
 
-MILKY_CONSOLE_EXPORT const milky_console_plugin_api_t *milky_plugin_get_api(
-    uint32_t requested_abi_version
-);
+/*
+ * Plugin entry point
+ *
+ * Returns a pointer to a statically allocated plugin API structure compatible
+ * with requested_abi_version, or NULL when the requested ABI is unsupported.
+ *
+ * The returned structure must:
+ *
+ * - have abi_version set to the implemented ABI version;
+ * - have struct_size set to the initialized structure size;
+ * - remain valid until the dynamic library is unloaded;
+ * - never be modified or freed by the host.
+ */
+MILKY_CONSOLE_EXPORT
+MILKY_CONSOLE_NODISCARD
+const milky_console_plugin_api_t *MILKY_CONSOLE_CALL
+milky_plugin_get_api(unsigned int requested_abi_version);
 
 #ifdef __cplusplus
-}
+} /* extern "C" */
 #endif
 
 #endif /* MILKY_CONSOLE_H */

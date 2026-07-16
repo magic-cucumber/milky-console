@@ -23,9 +23,11 @@ kotlin {
             implementation(libs.kotlinx.serialization.json)
 
             implementation(project(":plugin:protocol"))
+            implementation(project(":plugin:api"))
 
             implementation(project(":utils:pipe"))
             implementation(project(":utils:dlloader"))
+            implementation(project(":utils:event-bus"))
         }
 
 

@@ -10,6 +10,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kache)
         }
 
         commonTest.dependencies {
@@ -17,5 +18,4 @@ kotlin {
         }
     }
 }
-
 

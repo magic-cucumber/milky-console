@@ -28,7 +28,7 @@ internal val MAX_SPLIT_PACKET_DATA_SIZE: Long = MAX_SINGLE_PACKET_DATA_SIZE - SP
 
 /** 此包是否为一个分包。 */
 val Packet.isSplit: Boolean
-    get() = index != null && size != null
+    get() = index != null && size != null && group != null
 
 internal val Packet.headerSize: Long
     get() = FIXED_HEADER_SIZE + if (isSplit) SPLIT_HEADER_SIZE else 0L

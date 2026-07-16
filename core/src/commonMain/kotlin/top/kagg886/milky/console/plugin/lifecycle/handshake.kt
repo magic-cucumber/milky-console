@@ -7,9 +7,13 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.encodeToJsonElement
+import kotlinx.serialization.json.jsonObject
 import okio.IOException
 import top.kagg886.milky.console.plugin.Plugin
 import top.kagg886.milky.console.plugin.PluginRegistry
+import top.kagg886.milky.console.plugin.config
 import top.kagg886.milky.console.plugin.libpath
 import top.kagg886.milky.console.protocol.ClientHandshakeResult
 import top.kagg886.milky.console.protocol.ClientHandshakeRequest
@@ -50,6 +54,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                 sendPipe.sink.fd.toString(),
                 receivePipe.source.fd.toString(),
                 libpath.toString(),
+                Json.encodeToString(config)
             )
 
             /**
