@@ -7,6 +7,9 @@ static milky_bool_t MILKY_CONSOLE_CALL on_load(
 ) {
     (void) config_json;
     (void) host_api;
+    #if defined(_MSC_VER)
+    _set_abort_behavior(0, _WRITE_ABORT_MSG | _CALL_REPORTFAULT);
+    #endif
     abort();
 }
 
