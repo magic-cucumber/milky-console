@@ -70,8 +70,9 @@ int main(int argc, char **argv) {
 #else
         int handle = (int) strtol(argv[2], NULL, 10);
         char buffer[64];
-        ssize_t read = read(handle, buffer, sizeof(buffer));
-        if (read < 0) return 1;
+        ssize_t bytes_read = read(handle, buffer, sizeof(buffer));
+        if (bytes_read < 0) return 1;
+        size_t read = (size_t) bytes_read;
 #endif
         return fwrite(buffer, 1, read, stdout) == read ? 0 : 1;
     }
