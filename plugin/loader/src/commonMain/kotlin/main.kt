@@ -60,9 +60,15 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         }
     }
 
+    val handshakeRejectionSent = CompletableDeferred<Unit>()
     val sender = launch(start = CoroutineStart.UNDISPATCHED) {
         log.i { ">>> sender coroutine enter, subscribing to MilkyConsoleFromEvent.FromPlugin" }
-        EventBus.subscribe<MilkyConsoleFromEvent.FromPlugin>().collect(::writeEvent)
+        EventBus.subscribe<MilkyConsoleFromEvent.FromPlugin>().collect { event ->
+            writeEvent(event)
+            if (event is PluginHandshakeResult.Rejected) {
+                handshakeRejectionSent.complete(Unit)
+            }
+        }
         log.i { "<<< sender coroutine exit" }
     }
     log.d { "[group: coroutine-start] sender launched, EventBus subscription active" }
@@ -110,7 +116,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     suspend fun rejectHandshake(message: String) {
         EventBus.post(PluginHandshakeResult.Rejected(message))
-        yield()
+        handshakeRejectionSent.await()
         sink.close()
         source.close()
         exit(1)

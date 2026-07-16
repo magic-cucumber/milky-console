@@ -16,14 +16,18 @@ import okio.Timeout
 import platform.posix.EBADF
 import platform.posix.EINTR
 import platform.posix.EPIPE
+import platform.posix.SIGPIPE
+import platform.posix.SIG_IGN
 import platform.posix.close
 import platform.posix.errno
 import platform.posix.pipe
 import platform.posix.read
+import platform.posix.signal
 import platform.posix.strerror
 import platform.posix.write
 
 actual fun IPCAnonymousPipe.Companion.create(): IPCAnonymousPipe = memScoped {
+    ignoreBrokenPipeSignal()
     val descriptors = allocArray<IntVar>(2)
     if (pipe(descriptors) != 0) {
         throw errnoIOException("pipe", errno)
@@ -33,6 +37,14 @@ actual fun IPCAnonymousPipe.Companion.create(): IPCAnonymousPipe = memScoped {
         sendFD = descriptors[1].toULong(),
         receiveFD = descriptors[0].toULong(),
     )
+}
+
+/**
+ * POSIX raises SIGPIPE before [write] can return EPIPE when the read end is closed.
+ * Ignore it process-wide so pipe writes follow this API's error contract instead.
+ */
+private fun ignoreBrokenPipeSignal() {
+    signal(SIGPIPE, SIG_IGN)
 }
 
 data class UnixIPCPipe(val sendFD: ULong, val receiveFD: ULong) : IPCAnonymousPipe {

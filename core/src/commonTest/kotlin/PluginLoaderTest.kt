@@ -131,7 +131,11 @@ class PluginLoaderTest {
         val closed = withTimeout(10.seconds) {
             plugin.state.filterIsInstance<Plugin.State.Closed>().first()
         }
-        assertNotNull(closed.exception)
+        val exception = assertNotNull(closed.exception)
+        assertTrue(
+            exception.message?.contains(expectedMessage) == true,
+            "Expected exception message to contain <$expectedMessage>, but was <${exception.message}>",
+        )
     }
 }
 

@@ -18,7 +18,6 @@ kotlin {
 
     sourceSets {
         commonMain.dependencies {
-            implementation(libs.clikt)
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
 

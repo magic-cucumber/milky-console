@@ -45,7 +45,6 @@ kotlin {
             implementation(libs.ktor.client.serialization)
             implementation(libs.ktor.serialization.json)
             implementation(libs.ktor.client.logging)
-            implementation(libs.clikt)
             implementation(libs.okio)
 
             implementation(project(":plugin:protocol"))
