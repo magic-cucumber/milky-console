@@ -54,6 +54,7 @@ fun Plugin.startPipeJob(
                 }
             }
     }
+
     val receivePipeJob = registry.scope.launch {
         val packetsByGroup = LRUCache.create<Uuid, List<Packet>>(1.minutes, 16 * 1024 * 1024) { _, packets ->
             packets.sumOf { it.data.size }

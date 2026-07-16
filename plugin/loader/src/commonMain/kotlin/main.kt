@@ -6,6 +6,7 @@ import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.decodeFromString
 import org.ntqqrev.milky.milkyJsonModule
 import platform.milky_console_interop.*
+import platform.posix.atexit
 import platform.posix.exit
 import platform.posix.free
 import platform.posix.malloc
