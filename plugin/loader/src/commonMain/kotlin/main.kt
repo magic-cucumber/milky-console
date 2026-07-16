@@ -42,6 +42,7 @@ import top.kagg886.milky.console.protocol.HostHandshakeRequest
 import top.kagg886.milky.console.protocol.MilkyConsoleFromEvent
 import top.kagg886.milky.console.protocol.PluginEvent
 import top.kagg886.milky.console.protocol.PluginHandshakeRequest
+import top.kagg886.milky.console.protocol.PluginHandshakeError
 import top.kagg886.milky.console.protocol.PluginHandshakeResult
 import top.kagg886.milky.console.protocol.PluginLog
 import top.kagg886.milky.console.util.eventbus.EventBus
@@ -116,8 +117,8 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         }
     }
 
-    suspend fun reject(message: String): Nothing {
-        EventBus.post(PluginHandshakeResult.Rejected(message))
+    suspend fun reject(message: String, error: PluginHandshakeError? = null): Nothing {
+        EventBus.post(PluginHandshakeResult.Rejected(message, error))
         terminalResultWritten.await()
         receiver.cancel()
         sender.cancel()
@@ -130,38 +131,40 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     // Sender and HostHandshakeRequest listener are now both active.
     EventBus.post(PluginHandshakeRequest)
     if (withTimeoutOrNull(10.seconds) { hostHandshakeRequest.await() } == null) {
-        reject("10秒内没有收到握手包，取消握手")
+        reject("10秒内没有收到握手包，取消握手", PluginHandshakeError.TIMEOUT)
     }
 
     val loader = try {
         DLLoader(args[2])
     } catch (e: Throwable) {
-        reject("无法加载插件动态库: ${e.message}")
+        reject("无法加载插件动态库: ${e.message}", PluginHandshakeError.DYNAMIC_LIBRARY_LOAD_FAILED)
     }
-    val api = try {
-        val pointer = loader
-            .findSymbol<(UInt) -> CPointer<milky_console_plugin_api>?>("milky_plugin_get_api")
-            .invoke(MILKY_CONSOLE_HOST_ABI_VERSION)
-        if (pointer == null || pointer.rawValue == NativePtr.NULL) {
-            error("插件加载函数返回值为空指针")
-        }
-        pointer.pointed
+    val getApi = try {
+        loader.findSymbol<(UInt) -> CPointer<milky_console_plugin_api>?>("milky_plugin_get_api")
     } catch (e: Throwable) {
         loader.close()
-        reject("无法查找到插件加载函数: ${e.message}")
+        reject("无法查找到插件加载函数: ${e.message}", PluginHandshakeError.ENTRY_POINT_NOT_FOUND)
     }
+    val pointer = getApi.invoke(MILKY_CONSOLE_HOST_ABI_VERSION)
+    if (pointer == null || pointer.rawValue == NativePtr.NULL) {
+        reject(
+            "无法查找到插件加载函数: 插件加载函数返回值为空指针",
+            PluginHandshakeError.NULL_PLUGIN_API,
+        )
+    }
+    val api = pointer.pointed
 
     if (api.abi_version != MILKY_CONSOLE_HOST_ABI_VERSION) {
-        loader.close()
-        reject("插件ABI不匹配。本加载器期望: $MILKY_CONSOLE_HOST_ABI_VERSION，该插件的ABI为${api.abi_version}")
+        reject(
+            "插件ABI不匹配。本加载器期望: $MILKY_CONSOLE_HOST_ABI_VERSION，该插件的ABI为${api.abi_version}",
+            PluginHandshakeError.ABI_MISMATCH,
+        )
     }
     if (api.struct_size < sizeOf<milky_console_plugin_api>().toUInt()) {
-        loader.close()
-        reject("插件API不匹配。")
+        reject("插件API不匹配。", PluginHandshakeError.API_MISMATCH)
     }
     if (api.on_load == null) {
-        loader.close()
-        reject("插件API缺少 on_load")
+        reject("插件API缺少 on_load", PluginHandshakeError.MISSING_ON_LOAD)
     }
 
     val hostApi = malloc(sizeOf<milky_console_host_api>().toULong())!!.reinterpret<milky_console_host_api>()
@@ -182,8 +185,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     }
     if (loaded == MILKY_FALSE) {
         free(hostApi)
-        loader.close()
-        reject("插件初始化失败")
+        reject("插件初始化失败", PluginHandshakeError.INITIALIZATION_FAILED)
     }
 
     // Ready is sent only after all runtime listeners are registered.

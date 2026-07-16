@@ -12,13 +12,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
-import okio.IOException
 import top.kagg886.milky.console.plugin.Plugin
+import top.kagg886.milky.console.plugin.PluginhandshakeFailedException
 import top.kagg886.milky.console.plugin.PluginRegistry
 import top.kagg886.milky.console.plugin.manifest
 import top.kagg886.milky.console.protocol.HostHandshakeRequest
 import top.kagg886.milky.console.protocol.MilkyConsoleFromEvent
 import top.kagg886.milky.console.protocol.PluginHandshakeRequest
+import top.kagg886.milky.console.protocol.PluginHandshakeError
 import top.kagg886.milky.console.protocol.PluginHandshakeResult
 import top.kagg886.milky.console.protocol.PluginLog
 import top.kagg886.milky.console.util.eventbus.EventBus
@@ -134,7 +135,13 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
         receivePipe.sink.close()
         receivePipe.source.close()
         _state.value = Plugin.State.Closing
-        _state.value = Plugin.State.Closed(e)
+        _state.value = Plugin.State.Closed(
+            PluginhandshakeFailedException(
+                "无法启动插件进程: ${e.message}",
+                PluginHandshakeError.PROCESS_START_FAILED,
+                e,
+            )
+        )
         return false
     }
 
@@ -154,7 +161,9 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     } == true
     if (!loaderIsListening) {
         pluginHandshakeResult.cancel()
-        return closeHandshake(registry, runtime, IOException("插件握手失败: loader 未准备好监听"))
+        val error = if (processExit.isCompleted) PluginHandshakeError.PROCESS_EXITED else PluginHandshakeError.TIMEOUT
+        val message = if (processExit.isCompleted) "进程意外退出。" else "等待 loader 准备握手超时"
+        return closeHandshake(registry, runtime, PluginhandshakeFailedException(message, error))
     }
 
     // Loader has explicitly confirmed its HostHandshakeRequest listener is active.
@@ -165,17 +174,24 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             { pluginHandshakeResult.await() },
             {
                 processExit.await()
-                PluginHandshakeResult.Rejected("进程在握手完成前退出")
+                // The process can exit immediately after writing Rejected. Drain the pipe
+                // before classifying it as a crash so the buffered terminal packet wins.
+                receivePipeJob.join()
+                if (pluginHandshakeResult.isCompleted) {
+                    pluginHandshakeResult.await()
+                } else {
+                    PluginHandshakeResult.Rejected("进程意外退出。", PluginHandshakeError.PROCESS_EXITED)
+                }
             },
         )
-    } ?: PluginHandshakeResult.Rejected("握手超时")
+    } ?: PluginHandshakeResult.Rejected("握手超时", PluginHandshakeError.TIMEOUT)
 
     return when (result) {
         PluginHandshakeResult.Ready -> enterReady(registry, runtime)
         is PluginHandshakeResult.Rejected -> closeHandshake(
             registry,
             runtime,
-            IOException("插件握手失败: ${result.message}"),
+            PluginhandshakeFailedException(result.message, result.error),
         )
     }
 }

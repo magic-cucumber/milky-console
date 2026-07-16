@@ -17,5 +17,22 @@ sealed interface PluginHandshakeResult : MilkyConsoleFromEvent.FromPlugin {
     data object Ready : PluginHandshakeResult
 
     @Serializable
-    data class Rejected(val message: String) : PluginHandshakeResult
+    data class Rejected(
+        val message: String,
+        val error: PluginHandshakeError? = null,
+    ) : PluginHandshakeResult
+}
+
+@Serializable
+enum class PluginHandshakeError {
+    PROCESS_START_FAILED,
+    PROCESS_EXITED,
+    TIMEOUT,
+    DYNAMIC_LIBRARY_LOAD_FAILED,
+    ENTRY_POINT_NOT_FOUND,
+    NULL_PLUGIN_API,
+    ABI_MISMATCH,
+    API_MISMATCH,
+    MISSING_ON_LOAD,
+    INITIALIZATION_FAILED,
 }
