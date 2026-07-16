@@ -6,16 +6,13 @@ import kotlinx.cinterop.*
 import kotlinx.coroutines.withContext
 import platform.linux.*
 import platform.posix.*
+import platform.posix_spawn.posix_spawn_file_actions_addchdir_np
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipe
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipeSink
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipeSource
 import top.kagg886.milky.console.util.pipe.create
 
 actual fun Process.Companion.create(config: ProcessConfig): Process {
-    require(config.workingDirectory == null) {
-        "workingDirectory is not supported on Unix until a portable posix_spawn chdir file action is available"
-    }
-
     val stdin = config.stdin.takeIf { it == ProcessConfig.IOOptions.Redirected }?.let { IPCAnonymousPipe.create() }
     val stdout = config.stdout.takeIf { it == ProcessConfig.IOOptions.Redirected }?.let { IPCAnonymousPipe.create() }
     val stderr = config.stderr.takeIf { it == ProcessConfig.IOOptions.Redirected }?.let { IPCAnonymousPipe.create() }
@@ -25,6 +22,12 @@ actual fun Process.Companion.create(config: ProcessConfig): Process {
             val actions = alloc<posix_spawn_file_actions_t>()
             checkSpawn(posix_spawn_file_actions_init(actions.ptr), "posix_spawn_file_actions_init")
             try {
+                config.workingDirectory?.let { workingDirectory ->
+                    checkSpawn(
+                        posix_spawn_file_actions_addchdir_np(actions.ptr, workingDirectory),
+                        "posix_spawn_file_actions_addchdir_np",
+                    )
+                }
                 addInputAction(actions.ptr, config.stdin, stdin)
                 addOutputAction(actions.ptr, config.stdout, stdout, STDOUT_FILENO)
                 addOutputAction(actions.ptr, config.stderr, stderr, STDERR_FILENO)

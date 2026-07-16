@@ -1,4 +1,5 @@
-headers = spawn.h unistd.h
+headers = posix_spawn.h
+compilerOpts = -D_GNU_SOURCE
 package = platform.posix_spawn
 
 ---

@@ -11,9 +11,15 @@ kotlin {
     macosArm64 {
         compilations.getByName("main").cinterops.create("posix_spawn") {
             defFile(project.file("src/nativeInterop/cinterop/posix_spawn.def"))
+            includeDirs(project.file("src/nativeInterop/cinterop"))
         }
     }
-    linuxX64()
+    linuxX64 {
+        compilations.getByName("main").cinterops.create("posix_spawn") {
+            defFile(project.file("src/nativeInterop/cinterop/posix_spawn.def"))
+            includeDirs(project.file("src/nativeInterop/cinterop"))
+        }
+    }
     mingwX64()
 
     applyDefaultHierarchyTemplate {
