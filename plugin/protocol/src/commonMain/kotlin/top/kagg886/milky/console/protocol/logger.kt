@@ -5,15 +5,9 @@ import kotlinx.serialization.Serializable
 /**
  * ================================================
  * Author:     iveou
- * Created on: 2026/7/16 13:41
+ * Created on: 2026/7/16 14:52
  * ================================================
  */
 
 @Serializable
-sealed interface MilkyConsoleFromEvent {
-    @Serializable
-    sealed interface FromPlugin : MilkyConsoleFromEvent
-
-    @Serializable
-    sealed interface FromHost : MilkyConsoleFromEvent
-}
+data class PluginLog(val level: Int, val tag: String, val message: String) : MilkyConsoleFromEvent.FromPlugin

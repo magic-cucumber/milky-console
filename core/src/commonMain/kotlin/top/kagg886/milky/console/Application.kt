@@ -1,10 +1,13 @@
 package top.kagg886.milky.console
 
-/**
- * ================================================
- * Author:     iveou
- * Created on: 2026/7/15 16:33
- * ================================================
- */
+import co.touchlab.kermit.Logger
+
+private val log = Logger.withTag("Application")
+
 object Application {
+    init {
+        log.i { ">>> Application init enter" }
+        log.d { "[group: app-init] Application singleton initialized" }
+        log.i { "<<< Application init exit" }
+    }
 }

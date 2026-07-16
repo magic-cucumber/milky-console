@@ -11,6 +11,9 @@ import kotlinx.cinterop.ptr
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.toCPointer
 import kotlinx.cinterop.value
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import platform.windows.*
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipe
@@ -189,12 +192,14 @@ private class WindowsProcess(
     private var terminated = false
     override val pid: Long get() = pidValue
 
-    override suspend fun await(): Process.ExitStatus = withContext(context) {
-        if (WaitForSingleObject(
-                handle,
-                INFINITE
-            ) != WAIT_OBJECT_0
-        ) error("WaitForSingleObject failed: Windows error ${GetLastError()}")
+    override suspend fun await(): Process.ExitStatus = withContext(context.minusKey(Job)) {
+        while (true) {
+            when (WaitForSingleObject(handle, 50u)) {
+                WAIT_OBJECT_0 -> break
+                WAIT_TIMEOUT.toUInt() -> currentCoroutineContext().ensureActive()
+                else -> error("WaitForSingleObject failed: Windows error ${GetLastError()}")
+            }
+        }
         memScoped {
             val exitCode = alloc<UIntVar>()
             if (GetExitCodeProcess(

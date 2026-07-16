@@ -28,6 +28,7 @@ kotlin {
             implementation(project(":utils:pipe"))
             implementation(project(":utils:dlloader"))
             implementation(project(":utils:event-bus"))
+            implementation(project(":utils:logger"))
         }
 
 

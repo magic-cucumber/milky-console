@@ -1,12 +1,13 @@
 package top.kagg886.milky.console.plugin
 
+import co.touchlab.kermit.Logger
 import okio.IOException
 
-/**
- * ================================================
- * Author:     iveou
- * Created on: 2026/7/15 17:30
- * ================================================
- */
+private val log = Logger.withTag("PluginException")
+
 class PluginException(override val message: String? = null, override val cause: Throwable? = null) :
-    IOException(message = message, cause = cause)
+    IOException(message = message, cause = cause) {
+    init {
+        log.e { "PluginException created: message=$message, cause=${cause?.message}" }
+    }
+}

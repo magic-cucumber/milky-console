@@ -1,38 +1,45 @@
 package top.kagg886.milky.console.util
 
-/**
- * ================================================
- * Author:     886kagg
- * Created on: 2026/7/15 21:29
- * ================================================
- */
-
+import co.touchlab.kermit.Logger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.selects.select
 
+private val log = Logger.withTag("Race")
+
 suspend fun <T> raceN(vararg tasks: suspend () -> T): T = coroutineScope {
-    val tasks = tasks.map { task ->
+    log.i { ">>> raceN() enter, taskCount=${tasks.size}" }
+    log.v { "raceN: creating LAZY async wrappers for ${tasks.size} tasks" }
+    val deferredTasks = tasks.map { task ->
         async(start = CoroutineStart.LAZY) {
             task()
         }
     }
+    log.d { "[group: task-init] ${deferredTasks.size} async tasks created" }
 
     try {
-        tasks.forEach { it.start() }
+        log.v { "raceN: starting all tasks" }
+        deferredTasks.forEach { it.start() }
 
-        select {
-            tasks.forEach { deferred ->
+        log.v { "raceN: entering select block, waiting for first completion" }
+        val result = select<T> {
+            deferredTasks.forEach { deferred ->
                 deferred.onAwait { result ->
+                    log.v { "raceN: task completed with result=$result" }
                     result
                 }
             }
         }
+        log.d { "[group: race-result] first task completed, result=$result" }
+        log.i { "<<< raceN() exit, result=$result" }
+        result
     } finally {
-        // 取消所有未完成任务
-        tasks.forEach { deferred ->
+        log.v { "raceN: cancelling all incomplete tasks" }
+        deferredTasks.forEach { deferred ->
             if (!deferred.isCompleted) {
                 deferred.cancel()
+                log.v { "raceN: cancelled incomplete task" }
             }
         }
+        log.d { "[group: cleanup] all incomplete tasks cancelled" }
     }
 }
