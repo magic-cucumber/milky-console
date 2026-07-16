@@ -1,0 +1,13 @@
+{
+  "metadata": {
+    "manifest_version": 1,
+    "protocol_version": 1
+  },
+  "id": "plugin-loader-test",
+  "name": "Plugin loader test",
+  "version": {
+    "name": "1.0.0",
+    "code": 1
+  },
+  "description": "Native fixture used by PluginLoaderTest"
+}

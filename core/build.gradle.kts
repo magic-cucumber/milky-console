@@ -2,6 +2,8 @@
 
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 import org.jetbrains.kotlin.gradle.targets.native.tasks.KotlinNativeTest
+import org.gradle.api.file.RegularFile
+import org.gradle.api.tasks.Sync
 import java.util.Locale
 
 plugins {
@@ -91,4 +93,89 @@ buildConfig {
     buildConfigField("SCHEMA_VERSION_END", 1)
     buildConfigField("PROTOCOL_VERSION_START", 1)
     buildConfigField("PROTOCOL_VERSION_END", 1)
+}
+
+data class PluginLoaderTestTarget(
+    val loaderTask: String,
+    val loaderBinary: Provider<RegularFile>,
+    val loaderExecutable: String,
+)
+
+val nativePluginProjects = file("src/commonTest/native")
+    .listFiles()
+    .orEmpty()
+    .filter { it.isDirectory && it.resolve("CMakeLists.txt").isFile }
+
+val processPluginBuildTasks = nativePluginProjects.map { pluginProject ->
+    tasks.register<Exec>("process${pluginProject.name.replaceFirstChar(Char::uppercase)}Build") {
+        workingDir = pluginProject
+        when {
+            System.getProperty("os.name").startsWith("Win") -> commandLine(
+                "powershell", "-NoProfile", "-Command",
+                $$"""
+                    cmake -S . -B build;
+                    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                    cmake --build build --config Debug;
+                    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+                """.trimIndent()
+            )
+            System.getProperty("os.name").startsWith("Linux") ||
+                System.getProperty("os.name").startsWith("Mac") -> commandLine(
+                "bash", "-c",
+                """
+                    cmake -S . -B build &&
+                    cmake --build build --config Debug
+                """.trimIndent()
+            )
+            else -> error("Unsupported test platform: ${System.getProperty("os.name")}")
+        }
+        inputs.files(fileTree(pluginProject) {
+            exclude("build/**")
+        })
+        outputs.dir(pluginProject.resolve("build/output"))
+    }
+}
+
+val pluginLoaderTestTarget = run {
+    val loaderBuildDirectory = project(":plugin:loader").layout.buildDirectory
+    when {
+        System.getProperty("os.name").startsWith("Win") -> PluginLoaderTestTarget(
+            ":plugin:loader:linkDebugExecutableMingwX64",
+            loaderBuildDirectory.file("bin/mingwX64/debugExecutable/loader.exe"),
+            "loader.exe",
+        )
+        System.getProperty("os.name").startsWith("Linux") -> PluginLoaderTestTarget(
+            ":plugin:loader:linkDebugExecutableLinuxX64",
+            loaderBuildDirectory.file("bin/linuxX64/debugExecutable/loader.kexe"),
+            "loader",
+        )
+        System.getProperty("os.name").startsWith("Mac") -> PluginLoaderTestTarget(
+            ":plugin:loader:linkDebugExecutableMacosArm64",
+            loaderBuildDirectory.file("bin/macosArm64/debugExecutable/loader.kexe"),
+            "loader",
+        )
+        else -> error("Unsupported test platform: ${System.getProperty("os.name")}")
+    }
+}
+
+val pluginLoaderTestContainerDirectory = layout.buildDirectory.dir("plugin-test/container")
+
+val preparePluginLoaderTestContainer = tasks.register<Sync>("preparePluginLoaderTestContainer") {
+    dependsOn(processPluginBuildTasks)
+    dependsOn(pluginLoaderTestTarget.loaderTask)
+    inputs.file(pluginLoaderTestTarget.loaderBinary)
+    nativePluginProjects.forEach { pluginProject ->
+        from(pluginProject.resolve("build/output")) {
+            into("plugin")
+        }
+    }
+    from(pluginLoaderTestTarget.loaderBinary) {
+        rename { pluginLoaderTestTarget.loaderExecutable }
+    }
+    into(pluginLoaderTestContainerDirectory)
+}
+
+tasks.withType<KotlinNativeTest>().configureEach {
+    dependsOn(preparePluginLoaderTestContainer)
+    environment("MILKY_PLUGIN_TEST_DIRECTORY", pluginLoaderTestContainerDirectory.get().asFile.absolutePath)
 }

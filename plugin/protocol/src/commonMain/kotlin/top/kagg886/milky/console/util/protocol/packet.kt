@@ -2,6 +2,7 @@ package top.kagg886.milky.console.util.protocol
 
 import kotlinx.serialization.ExperimentalSerializationApi
 import okio.Buffer
+import top.kagg886.milky.console.protocol.MilkyConsoleFromEvent
 import top.kagg886.milky.console.util.toBuffer
 import kotlin.uuid.Uuid
 
@@ -23,3 +24,9 @@ data class Packet(
 
 @OptIn(ExperimentalSerializationApi::class)
 inline fun <reified T> T.toPacket(): List<Packet> = Packet(data = this.toBuffer()).split()
+
+@OptIn(ExperimentalSerializationApi::class)
+fun MilkyConsoleFromEvent.FromHost.toPacket(): List<Packet> = Packet(data = this.toBuffer()).split()
+
+@OptIn(ExperimentalSerializationApi::class)
+fun MilkyConsoleFromEvent.FromPlugin.toPacket(): List<Packet> = Packet(data = this.toBuffer()).split()

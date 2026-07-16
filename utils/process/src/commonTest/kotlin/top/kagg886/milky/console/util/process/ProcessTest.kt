@@ -113,6 +113,27 @@ class ProcessTest {
         assertEquals(Process.ExitStatus.Result(0), process.await())
         assertEquals("inherited pipe", pipe.source.buffer().readUtf8())
     }
+
+    @Test
+    fun readsFromInheritedPipe() = runBlocking {
+        val pipe = IPCAnonymousPipe.create()
+        val process = Process.create {
+            executable(nativeTestExecutablePath())
+            arguments("--read-inherited-pipe", pipe.source.fd.toString())
+            inheritFD(pipe.source.fd)
+            stdin(ProcessConfig.IOOptions.None)
+            stdout(ProcessConfig.IOOptions.Redirected)
+            stderr(ProcessConfig.IOOptions.None)
+        }
+
+        pipe.source.close()
+        val input = Buffer().writeUtf8("inherited pipe")
+        pipe.sink.write(input, input.size)
+        pipe.sink.close()
+
+        assertEquals(Process.ExitStatus.Result(0), process.await())
+        assertEquals("inherited pipe", process.stdout.buffer().readUtf8())
+    }
 }
 
 internal expect fun nativeTestExecutablePath(): String

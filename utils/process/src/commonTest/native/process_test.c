@@ -61,6 +61,21 @@ int main(int argc, char **argv) {
         return write_inherited_pipe(argv[2]);
     }
 
+    if (argc >= 3 && strcmp(argv[1], "--read-inherited-pipe") == 0) {
+#ifdef _WIN32
+        HANDLE handle = (HANDLE) (uintptr_t) strtoull(argv[2], NULL, 10);
+        char buffer[64];
+        DWORD read;
+        if (!ReadFile(handle, buffer, sizeof(buffer), &read, NULL)) return 1;
+#else
+        int handle = (int) strtol(argv[2], NULL, 10);
+        char buffer[64];
+        ssize_t read = read(handle, buffer, sizeof(buffer));
+        if (read < 0) return 1;
+#endif
+        return fwrite(buffer, 1, read, stdout) == read ? 0 : 1;
+    }
+
     if (argc >= 3 && strcmp(argv[1], "--not-write-inherited-pipe") == 0) {
         return write_inherited_pipe(argv[2]) == 0 ? 1 : 0;
     }

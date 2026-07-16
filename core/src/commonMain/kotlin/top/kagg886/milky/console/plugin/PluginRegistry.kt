@@ -60,8 +60,14 @@ class PluginRegistry(val appBasePath: Path) {
         return impl
     }
 
+    fun remove(plugin: Plugin) {
+        if (plugin.state.value is Plugin.State.Closed) {
+            _plugins.remove(plugin)
+        }
+    }
+
     /**
-     * 获取插件config的目录
+     * 获取插件配置目录
      */
     fun pluginConfigPath(plugin: Plugin): Path {
         val path = appBasePath / "config" / "${plugin.manifest.id}.json"
@@ -74,7 +80,7 @@ class PluginRegistry(val appBasePath: Path) {
     }
 
     /**
-     * 获取插件进程根目录
+     * 获取插件容器目录
      */
     fun pluginDataPath(plugin: Plugin): Path {
         val path = appBasePath / "container" / plugin.manifest.id

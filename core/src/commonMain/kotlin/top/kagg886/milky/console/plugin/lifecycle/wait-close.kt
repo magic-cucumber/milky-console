@@ -49,4 +49,5 @@ fun Plugin.waitCloseJob(registry: PluginRegistry): Job =
             is Process.ExitStatus.Result if status.exitCode != 0 -> Plugin.State.Closed(IOException("process exited with exit code ${status.exitCode}"))
             else -> error("process exitCode $status.exitCode")
         }
+        registry.remove(this@waitCloseJob)
     }

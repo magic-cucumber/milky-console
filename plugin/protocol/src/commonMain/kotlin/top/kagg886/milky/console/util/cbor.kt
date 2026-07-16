@@ -1,6 +1,7 @@
 package top.kagg886.milky.console.util
 
 import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.PolymorphicSerializer
 import kotlinx.serialization.cbor.Cbor
 import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.encodeToByteArray
@@ -33,8 +34,10 @@ val MilkyConsoleCbor = Cbor {
             subclass(HostClose::class)
         }
         polymorphic(MilkyConsoleFromEvent.FromPlugin::class) {
-            subclass(PluginHandshakeResult.Ready::class)
-            subclass(PluginHandshakeResult.Rejected::class)
+            polymorphic(PluginHandshakeResult::class) {
+                subclass(PluginHandshakeResult.Ready::class)
+                subclass(PluginHandshakeResult.Rejected::class)
+            }
             subclass(PluginEvent::class)
             subclass(PluginClosed::class)
         }
@@ -47,4 +50,14 @@ inline fun <reified T> Buffer.readContent(format: Cbor = MilkyConsoleCbor): T = 
 @OptIn(ExperimentalSerializationApi::class)
 inline fun <reified T> T.toBuffer(format: Cbor = MilkyConsoleCbor) : Buffer = Buffer().apply {
     write(format.encodeToByteArray(this@toBuffer))
+}
+
+@OptIn(ExperimentalSerializationApi::class)
+fun MilkyConsoleFromEvent.FromHost.toBuffer(format: Cbor = MilkyConsoleCbor): Buffer = Buffer().apply {
+    write(format.encodeToByteArray(PolymorphicSerializer(MilkyConsoleFromEvent.FromHost::class), this@toBuffer))
+}
+
+@OptIn(ExperimentalSerializationApi::class)
+fun MilkyConsoleFromEvent.FromPlugin.toBuffer(format: Cbor = MilkyConsoleCbor): Buffer = Buffer().apply {
+    write(format.encodeToByteArray(PolymorphicSerializer(MilkyConsoleFromEvent.FromPlugin::class), this@toBuffer))
 }

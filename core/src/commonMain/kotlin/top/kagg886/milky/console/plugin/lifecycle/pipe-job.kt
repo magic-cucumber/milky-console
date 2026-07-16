@@ -60,7 +60,12 @@ fun Plugin.startPipeJob(
             packets.sumOf { it.data.size }
         }
         while (isActive) {
-            val packet = receive.readPacket()
+            val packet = try {
+                receive.readPacket()
+            } catch (_: IllegalArgumentException) {
+                // The loader has closed its pipe before a complete next packet could be read.
+                return@launch
+            }
             val mergedPacket = if (packet.isSplit) {
                 val group = requireNotNull(packet.group)
                 val packets = packetsByGroup.getOrPut(group) { emptyList() }!! + packet

@@ -30,6 +30,7 @@ import top.kagg886.milky.console.util.eventbus.LRUCache
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipe
 import top.kagg886.milky.console.util.pipe.create
 import top.kagg886.milky.console.util.process.Process
+import top.kagg886.milky.console.util.process.ProcessConfig
 import top.kagg886.milky.console.util.process.create
 import top.kagg886.milky.console.util.protocol.Packet
 import top.kagg886.milky.console.util.protocol.merge
@@ -56,9 +57,6 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     val sendPipe = IPCAnonymousPipe.create()
     val receivePipe = IPCAnonymousPipe.create()
 
-    sendPipe.source.close()
-    receivePipe.sink.close()
-
     val pluginId = manifest.id
     val send = sendPipe.sink
     val receive = receivePipe.source
@@ -70,9 +68,12 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             context(registry.scope.coroutineContext)
             workingDirectory(registry.pluginDataPath(this@handshake).toString())
             executable(registry.loaderPath().toString())
+            stdin(ProcessConfig.IOOptions.None)
+            stdout(ProcessConfig.IOOptions.None)
+            stderr(ProcessConfig.IOOptions.None)
             arguments(
-                sendPipe.sink.fd.toString(),
-                receivePipe.source.fd.toString(),
+                receivePipe.sink.fd.toString(),
+                sendPipe.source.fd.toString(),
                 libpath.toString(),
                 Json.encodeToString(config),
             )
@@ -80,10 +81,13 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             /**
             unix模拟windows行为，详见 [process.macos.kt] [process.linux.kt]
              */
-            inheritFD(sendPipe.sink.fd, receivePipe.source.fd)
+            inheritFD(sendPipe.source.fd, receivePipe.sink.fd)
         }
     }
+    sendPipe.source.close()
+    receivePipe.sink.close()
 
+    _state.value = Plugin.State.Handshaking(libpath,manifest,config)
     val result: PluginHandshakeResult = raceN(
         {
             when (val exit = progress.await()) {
@@ -124,7 +128,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
         return false
     }
 
-    val closeAwaitJob = waitCloseJob(registry,progress)
+    val closeAwaitJob = waitCloseJob(registry)
 
     _state.value = Plugin.State.Ready(
         libpath,
