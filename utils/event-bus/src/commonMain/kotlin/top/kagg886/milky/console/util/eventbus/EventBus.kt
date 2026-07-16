@@ -1,6 +1,7 @@
 package top.kagg886.milky.console.util.eventbus
 
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.flow
@@ -18,32 +19,55 @@ import kotlin.reflect.KClass
 
 object EventBus {
     private val channelsMutex = Mutex()
-    private val channels = mutableMapOf<KClass<*>, Channel<Any>>()
+    internal val channels = mutableMapOf<KClass<*>, MutableSet<Channel<Any>>>()
 
-    suspend fun post(event: Any) =
-        channelFor(event::class).send(event)
+    suspend fun post(event: Any) {
+        val subscribers = channelsMutex.withLock {
+            channels[event::class]?.toList().orEmpty()
+        }
+
+        subscribers.forEach { channel ->
+            try {
+                channel.send(event)
+            } catch (_: ClosedSendChannelException) {
+                // The subscriber was cancelled after the snapshot was taken.
+            }
+        }
+    }
 
     fun tryPost(event: Any): Boolean {
         if (!channelsMutex.tryLock()) return false
 
-        return try {
-            channelForLocked(event::class).trySend(event).isSuccess
+        val subscribers = try {
+            channels[event::class]?.toList().orEmpty()
         } finally {
             channelsMutex.unlock()
+        }
+
+        return subscribers.isNotEmpty() && subscribers.all { channel ->
+            channel.trySend(event).isSuccess
         }
     }
 
     fun <T : Any> subscribe(type: KClass<T>): Flow<T> = flow {
-        channelFor(type).receiveAsFlow().filterIsInstance(type).collect(::emit)
+        val channel = Channel<Any>(Channel.BUFFERED)
+
+        channelsMutex.withLock {
+            channels.getOrPut(type) { mutableSetOf() }.add(channel)
+        }
+
+        try {
+            channel.receiveAsFlow().filterIsInstance(type).collect(::emit)
+        } finally {
+            channelsMutex.withLock {
+                channels[type]?.let { subscribers ->
+                    subscribers.remove(channel)
+                    if (subscribers.isEmpty()) channels.remove(type)
+                }
+            }
+            channel.close()
+        }
     }
 
     inline fun <reified T : Any> subscribe(): Flow<T> = subscribe(T::class)
-
-    private suspend fun channelFor(type: KClass<*>): Channel<Any> = channelsMutex.withLock {
-        channelForLocked(type)
-    }
-
-    private fun channelForLocked(type: KClass<*>): Channel<Any> = channels.getOrPut(type) {
-        Channel(Channel.BUFFERED)
-    }
 }
