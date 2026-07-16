@@ -6,9 +6,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 import okio.Path
 import top.kagg886.milky.console.plugin.config.PluginManifest
+import top.kagg886.milky.console.plugin.lifecycle.PluginInboundEvent
 import top.kagg886.milky.console.protocol.MilkyConsoleFromEvent
 import top.kagg886.milky.console.util.eventbus.EventBus
 import top.kagg886.milky.console.util.process.Process
@@ -97,9 +99,9 @@ suspend fun Plugin.nextEvent(): MilkyConsoleFromEvent.FromPlugin {
     val pluginId = manifest.id
     val flow1 = state
     val flow2 = EventBus
-        .subscribe<Pair<String, MilkyConsoleFromEvent.FromPlugin>>()
-        .filter { it.first == pluginId }
-        .map { it.second }
+        .subscribe<PluginInboundEvent>()
+        .filter { it.pluginId == pluginId }
+        .map { it.event }
 
     return raceN(
         { flow2.first() },
