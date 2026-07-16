@@ -91,6 +91,13 @@ class ProcessTest {
     @Test
     fun writesToInheritedPipe() = runBlocking {
         val pipe = IPCAnonymousPipe.create()
+        val nonInheritedProcess = Process.create {
+            executable(nativeTestExecutablePath())
+            arguments("--not-write-inherited-pipe", pipe.sink.fd.toString())
+            stdin(ProcessConfig.IOOptions.None)
+            stdout(ProcessConfig.IOOptions.None)
+            stderr(ProcessConfig.IOOptions.None)
+        }
         val process = Process.create {
             executable(nativeTestExecutablePath())
             arguments("--write-inherited-pipe", pipe.sink.fd.toString())
@@ -102,6 +109,7 @@ class ProcessTest {
 
         pipe.sink.close()
 
+        assertEquals(Process.ExitStatus.Result(0), nonInheritedProcess.await())
         assertEquals(Process.ExitStatus.Result(0), process.await())
         assertEquals("inherited pipe", pipe.source.buffer().readUtf8())
     }

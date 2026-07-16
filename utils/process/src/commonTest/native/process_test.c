@@ -61,6 +61,10 @@ int main(int argc, char **argv) {
         return write_inherited_pipe(argv[2]);
     }
 
+    if (argc >= 3 && strcmp(argv[1], "--not-write-inherited-pipe") == 0) {
+        return write_inherited_pipe(argv[2]) == 0 ? 1 : 0;
+    }
+
     fprintf(stderr, "unknown process_test command\n");
     return 2;
 }
