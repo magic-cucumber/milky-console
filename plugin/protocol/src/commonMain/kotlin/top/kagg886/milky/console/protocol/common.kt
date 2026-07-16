@@ -11,7 +11,4 @@ import org.ntqqrev.milky.Event
  */
 
 @Serializable
-sealed interface MilkyConsoleEvent {
-    sealed interface InternalEvent: MilkyConsoleEvent
-    data class ProtocolEvent(val event: Event) : MilkyConsoleEvent
-}
+data class ProtocolEvent(val event: Event) : MilkyConsoleEvent

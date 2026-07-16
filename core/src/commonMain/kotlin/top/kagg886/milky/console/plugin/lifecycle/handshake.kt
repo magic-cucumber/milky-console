@@ -3,9 +3,15 @@ package top.kagg886.milky.console.plugin.lifecycle
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.encodeToJsonElement
@@ -15,18 +21,26 @@ import top.kagg886.milky.console.plugin.Plugin
 import top.kagg886.milky.console.plugin.PluginRegistry
 import top.kagg886.milky.console.plugin.config
 import top.kagg886.milky.console.plugin.libpath
+import top.kagg886.milky.console.plugin.manifest
 import top.kagg886.milky.console.protocol.ClientHandshakeResult
 import top.kagg886.milky.console.protocol.ClientHandshakeRequest
+import top.kagg886.milky.console.protocol.MilkyConsoleEvent
+import top.kagg886.milky.console.util.eventbus.EventBus
+import top.kagg886.milky.console.util.eventbus.LRUCache
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipe
 import top.kagg886.milky.console.util.pipe.create
 import top.kagg886.milky.console.util.process.Process
 import top.kagg886.milky.console.util.process.create
+import top.kagg886.milky.console.util.protocol.Packet
+import top.kagg886.milky.console.util.protocol.merge
 import top.kagg886.milky.console.util.protocol.readPacket
 import top.kagg886.milky.console.util.protocol.toPacket
 import top.kagg886.milky.console.util.protocol.writePacket
 import top.kagg886.milky.console.util.raceN
 import top.kagg886.milky.console.util.readContent
+import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.uuid.Uuid
 
 /**
  * ================================================
@@ -45,6 +59,12 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     sendPipe.source.close()
     receivePipe.sink.close()
 
+    val pluginId = manifest.id
+    val send = sendPipe.sink
+    val receive = receivePipe.source
+
+    val (sendPipeJob,receivePipeJob) = startPipeJob(registry, send, receive)
+
     val progress = withContext(Dispatchers.IO) {
         Process.create {
             context(registry.scope.coroutineContext)
@@ -54,7 +74,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                 sendPipe.sink.fd.toString(),
                 receivePipe.source.fd.toString(),
                 libpath.toString(),
-                Json.encodeToString(config)
+                Json.encodeToString(config),
             )
 
             /**
@@ -64,9 +84,6 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
         }
     }
 
-    val send = sendPipe.sink
-    val receive = receivePipe.source
-
     val result: ClientHandshakeResult = raceN(
         {
             when (val exit = progress.await()) {
@@ -75,22 +92,45 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             }
         },
         {
+            val handshakeResult = registry.scope.async(start = CoroutineStart.UNDISPATCHED) {
+                EventBus.subscribe<Pair<String, MilkyConsoleEvent>>()
+                    .first { (id, event) -> id == pluginId && event is ClientHandshakeResult }
+                    .second as ClientHandshakeResult
+            }
+
             //握手请求包
-            ClientHandshakeRequest.toPacket().forEach { send.writePacket(it) }
+            EventBus.post(pluginId to ClientHandshakeRequest)
 
             //等待子进程完成握手
             val result = withTimeoutOrNull(10.seconds) {
-                receive.readPacket().data.readContent<ClientHandshakeResult>()
+                handshakeResult.await()
             }
             result ?: ClientHandshakeResult.Failed("握手超时")
         }
     )
 
     if (result is ClientHandshakeResult.Failed) {
+        sendPipeJob.cancel()
+        receivePipeJob.cancel()
+        send.close()
+        receive.close()
         _state.value = Plugin.State.Closed(IOException("插件握手失败: ${result.message}"))
         return false
     }
 
+    val closeAwaitJob = waitCloseJob(registry,progress)
+
+    _state.value = Plugin.State.Ready(
+        libpath,
+        manifest,
+        config,
+        progress,
+        receivePipeJob,
+        sendPipeJob,
+        closeAwaitJob,
+    )
+
+    closeAwaitJob.start()
 
     return true
 }

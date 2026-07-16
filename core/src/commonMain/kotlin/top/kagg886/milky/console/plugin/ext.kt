@@ -1,11 +1,10 @@
 package top.kagg886.milky.console.plugin
 
+import kotlinx.coroutines.Job
 import kotlinx.serialization.json.JsonObject
 import okio.Path
-import top.kagg886.milky.console.util.pipe.IPCAnonymousPipe
-import top.kagg886.milky.console.util.process.Process
 import top.kagg886.milky.console.plugin.config.PluginManifest
-import top.kagg886.saltify.console.util.dlloader.DLLoader
+import top.kagg886.milky.console.util.process.Process
 
 /**
  * ================================================
@@ -16,7 +15,7 @@ import top.kagg886.saltify.console.util.dlloader.DLLoader
 
 val Plugin.manifest: PluginManifest
     get() {
-        val s = state
+        val s = state.value
         check(s is Plugin.State.ManifestInitialized) {
             "Plugin's state is not in ManifestInitialized"
         }
@@ -26,7 +25,7 @@ val Plugin.manifest: PluginManifest
 
 val Plugin.libpath: Path
     get() {
-        val s = state
+        val s = state.value
         check(s is Plugin.State.ManifestInitialized) {
             "Plugin's state is not in ManifestInitialized"
         }
@@ -35,7 +34,7 @@ val Plugin.libpath: Path
 
 val Plugin.config: JsonObject
     get() {
-        val s = state
+        val s = state.value
         check(s is Plugin.State.ConfigInitialized) {
             "Plugin's state is not in ConfigInitialized"
         }
@@ -44,27 +43,18 @@ val Plugin.config: JsonObject
 
 val Plugin.process: Process
     get() {
-        val s = state
+        val s = state.value
         check(s is Plugin.State.ProgressInitialized) {
             "Plugin's state is not in ProgressInitialized"
         }
         return s.process
     }
 
-val Plugin.ipc: IPCAnonymousPipe
+val Plugin.awaitJob: Job
     get() {
-        val s = state
-        check(s is Plugin.State.ProgressInitialized) {
-            "Plugin's state is not in ProgressInitialized"
+        val s = state.value
+        check(s is Plugin.State.Ready) {
+            "Plugin's state is not in Ready"
         }
-        return s.ipc
-    }
-
-val Plugin.dlLoader: DLLoader
-    get() {
-        val s = state
-        check(s is Plugin.State.ProgressInitialized) {
-            "Plugin's state is not in ProgressInitialized"
-        }
-        return s.dlLoader
+        return s.closeAwaitJob
     }

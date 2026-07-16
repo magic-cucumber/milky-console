@@ -10,11 +10,13 @@ import kotlinx.serialization.Serializable
  */
 
 @Serializable
-data object ClientHandshakeRequest
+data object ClientHandshakeRequest : MilkyConsoleEvent
 
 @Serializable
-sealed interface ClientHandshakeResult {
+sealed interface ClientHandshakeResult : MilkyConsoleEvent {
 
     data object Success : ClientHandshakeResult
     data class Failed(val message: String) : ClientHandshakeResult
 }
+@Serializable
+data class ClientClosed(val message: String,val stacktrace: String? = null): MilkyConsoleEvent

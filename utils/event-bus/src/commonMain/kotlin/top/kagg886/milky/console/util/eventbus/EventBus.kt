@@ -23,7 +23,7 @@ object EventBus {
 
     suspend fun post(event: Any) {
         val subscribers = channelsMutex.withLock {
-            channels[event::class]?.toList().orEmpty()
+            channels.keys.filter { it.isInstance(event) }.map { channels[it]?.toList().orEmpty() }.flatten()
         }
 
         subscribers.forEach { channel ->
@@ -39,7 +39,7 @@ object EventBus {
         if (!channelsMutex.tryLock()) return false
 
         val subscribers = try {
-            channels[event::class]?.toList().orEmpty()
+            channels.keys.filter { it.isInstance(event) }.map { channels[it]?.toList().orEmpty() }.flatten()
         } finally {
             channelsMutex.unlock()
         }

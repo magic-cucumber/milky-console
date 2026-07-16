@@ -48,7 +48,7 @@ fun Plugin.verify(): Boolean {
         }
 
         val manifestSupportRange = CoreBuildConfig.SCHEMA_VERSION_START..CoreBuildConfig.SCHEMA_VERSION_END
-        if (manifestVersion in manifestSupportRange) {
+        if (manifestVersion !in manifestSupportRange) {
             _state.value =
                 Plugin.State.Closed(PluginException("此版本的milky-console只支持 schema-version 为 [$manifestSupportRange] 的 版本。当前插件:$id 的版本为 $manifestVersion"))
             return false
@@ -68,7 +68,7 @@ fun Plugin.verify(): Boolean {
         }
 
         val protocolSupportRange = CoreBuildConfig.PROTOCOL_VERSION_START..CoreBuildConfig.PROTOCOL_VERSION_END
-        if (protocolVersion in protocolSupportRange) {
+        if (protocolVersion !in protocolSupportRange) {
             _state.value =
                 Plugin.State.Closed(PluginException("此版本的milky-console只支持 schema-version 为 [${protocolSupportRange}] 的 版本。当前插件:$id 的版本为 $manifestVersion"))
             return false

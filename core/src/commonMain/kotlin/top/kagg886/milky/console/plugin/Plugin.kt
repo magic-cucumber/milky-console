@@ -1,5 +1,6 @@
 package top.kagg886.milky.console.plugin
 
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -60,8 +61,9 @@ class Plugin(val basePath: Path) {
             override val manifest: PluginManifest,
             override val config: JsonObject,
             override val process: Process,
-            override val ipc: IPCAnonymousPipe,
-            override val dlLoader: DLLoader,
+            override val receivePipeJob: Job,
+            override val sendPipeJob: Job,
+            override val closeAwaitJob: Job
         ) : State, ManifestInitialized, ConfigInitialized, ProgressInitialized
 
         //插件因为各种原因正在关闭
@@ -80,9 +82,10 @@ class Plugin(val basePath: Path) {
 
         interface ProgressInitialized {
             val process: Process
-            val ipc: IPCAnonymousPipe
+            val sendPipeJob: Job
+            val receivePipeJob: Job
 
-            val dlLoader: DLLoader
+            val closeAwaitJob: Job
         }
     }
 }

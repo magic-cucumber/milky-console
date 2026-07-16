@@ -51,7 +51,6 @@ kotlin {
             implementation(project(":utils:logger"))
             implementation(project(":utils:pipe"))
             implementation(project(":utils:process"))
-            implementation(project(":utils:dlloader"))
         }
 
         commonTest.dependencies {

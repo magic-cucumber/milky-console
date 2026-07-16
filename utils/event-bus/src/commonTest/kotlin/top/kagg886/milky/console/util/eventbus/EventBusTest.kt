@@ -57,6 +57,27 @@ class EventBusTest {
     }
 
     @Test
+    fun childEventIsDeliveredToChildAndParentSubscribers() = runBlocking {
+        val event = ChildEvent("child")
+        val parent = async(start = CoroutineStart.UNDISPATCHED) {
+            EventBus.subscribe<ParentEvent>().first()
+        }
+        val child = async(start = CoroutineStart.UNDISPATCHED) {
+            EventBus.subscribe<ChildEvent>().first()
+        }
+
+        try {
+            EventBus.post(event)
+
+            assertEquals(event, withTimeout(1.seconds) { parent.await() })
+            assertEquals(event, withTimeout(1.seconds) { child.await() })
+        } finally {
+            parent.cancelAndJoin()
+            child.cancelAndJoin()
+        }
+    }
+
+    @Test
     fun eventPostedWithoutSubscribersIsDiscarded() = runBlocking {
         EventBus.post(UndeliveredEvent("discard"))
 
@@ -93,4 +114,6 @@ class EventBusTest {
     private data class SecondEvent(val value: String)
     private data class UndeliveredEvent(val value: String)
     private data object LifecycleEvent
+    private open class ParentEvent(val value: String)
+    private class ChildEvent(value: String) : ParentEvent(value)
 }

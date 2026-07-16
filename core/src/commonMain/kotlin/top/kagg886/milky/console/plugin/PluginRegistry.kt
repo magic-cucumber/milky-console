@@ -48,16 +48,15 @@ class PluginRegistry(val appBasePath: Path) {
             pluginsModifyLock.withLock {
                 _plugins.add(impl)
             }
-        }
 
-        scope.launch {
-            if (!impl.handshake(this@PluginRegistry)) {
-                pluginsModifyLock.withLock {
-                    _plugins.remove(impl)
+            scope.launch {
+                if (!impl.handshake(this@PluginRegistry)) {
+                    pluginsModifyLock.withLock {
+                        _plugins.remove(impl)
+                    }
                 }
             }
         }
-
         return impl
     }
 
