@@ -8,9 +8,9 @@
 | --- | --- | --- | --- |
 | `UnInitialized` | 无 | `Plugin(path)` 刚创建时的初始值。 | `verify()` 通过后进入 `Verified`；任一校验失败直接进入 `Closed`。 |
 | `Verified` | 动态库路径、`manifest`、默认配置 | `verify()` 已验证清单、版本、当前平台动态库及默认配置。`PluginRegistry.make()` 随后把插件加入注册表，并异步调用 `handshake()`。 | loader 进程创建完成后进入 `Handshaking`。 |
-| `Handshaking` | 与 `Verified` 相同 | `handshake()` 已创建管道收发任务和 loader 进程，并写入 `Plugin.State.Handshaking`；随后宿主发送 `HostHandshakeRequest` 并等待结果。 | 收到 `PluginHandshakeResult.Ready` 后进入 `Ready`；收到 `Rejected`、等待 10 秒超时或 loader 提前退出后进入 `Closed`。 |
-| `Ready` | 动态库路径、`manifest`、配置、loader `Process`、收发管道任务及关闭等待任务 | loader 收到 `HostHandshakeRequest`，动态库加载、ABI/API 结构校验和 `on_load` 成功后回传 `PluginHandshakeResult.Ready`；宿主创建并启动 `closeAwaitJob` 后写入。 | 收到插件 `PluginClosed`、宿主 `HostClose`，或 loader 进程退出时进入 `Closing`。 |
-| `Closing` | 无 | `closeAwaitJob` 的三路竞争任一路先完成：插件发出 `PluginClosed`、宿主发出对应插件的 `HostClose`，或 loader 进程退出。 | 等待/取得 loader 最终退出状态后进入 `Closed`。 |
+| `Handshaking` | 与 `Verified` 相同 | `handshake()` 已先接通管道与 EventBus、订阅 `PluginHandshakeRequest/Result`，再创建 loader 进程并写入 `Plugin.State.Handshaking`。宿主收到 `PluginHandshakeRequest` 后才发送 `HostHandshakeRequest`。 | 收到 `PluginHandshakeResult.Ready` 后进入 `Ready`；收到 `Rejected`、等待 10 秒超时或 loader 提前退出后由 `close.kt` 依次进入 `Closing`、`Closed`。 |
+| `Ready` | 动态库路径、`manifest`、配置、loader `Process`、收发管道任务及关闭等待任务 | loader 完成动态库、ABI/API 和 `on_load` 检查，并在设置运行期监听后回传 `PluginHandshakeResult.Ready`；宿主设置全部关闭监听后才写入。 | 收到插件 `PluginClosed`、宿主 `HostClose`，或 loader 进程退出时进入 `Closing`。 |
+| `Closing` | 无 | 握手失败；或 `closeAwaitJob` 的三路竞争任一路先完成：插件发出 `PluginClosed`、宿主发出对应插件的 `HostClose`，或 loader 进程退出。 | 清理管道并等待/取得 loader 最终退出状态后进入 `Closed`。 |
 | `Closed(exception?)` | 可选关闭原因 | 校验失败；握手被拒绝、超时或 loader 在握手完成前退出；或 `Closing` 后 loader 被杀死/以非零码退出。loader 正常以 `0` 退出时 `exception` 为 `null`。 | 终态；注册表会在握手失败或正常关闭流程结束后移除该插件。 |
 
 ### 校验失败的具体触发条件
@@ -32,11 +32,10 @@ stateDiagram-v2
 
     Verified --> Handshaking: 管道任务与 loader 创建完成
     Handshaking --> Ready: 收到 PluginHandshakeResult.Ready
-    Handshaking --> Closed: Rejected、10 秒超时、或 loader 提前退出
+    Handshaking --> Closing: Rejected、10 秒超时、或 loader 提前退出
+    Closing --> Closed: 清理管道并取得 loader 退出状态
 
     Ready --> Closing: PluginClosed / HostClose / loader 退出
-    Closing --> Closed: 取得 loader 退出状态
-
     Closed --> [*]
 ```
 
@@ -54,19 +53,27 @@ sequenceDiagram
     participant D as Plugin dynamic library
 
     R->>H: make(path) 后异步 handshake()
-    H->>H: 创建两条匿名管道并关闭本端无用端点
-    H->>HP: startPipeJob(send, receive)
+    H->>H: 创建两条匿名管道
+    H->>HP: 接通 EventBus 与收发管道
+    H->>H: 订阅 PluginHandshakeRequest / Result
     H->>L: 启动 loader(fd, fd, libpath, config)
-    L->>L: 从继承的 fd 建立 sink/source
+    H->>H: 关闭宿主不用的管道端点
     H->>H: state = Handshaking
-    L->>L: 并发等待 HostHandshakeRequest（10 秒）
+    L->>L: 从继承的 fd 建立 sink/source
+    L->>L: 接通 EventBus 与收发管道
+    L->>L: 订阅 HostHandshakeRequest
+    L-->>HP: PluginHandshakeRequest
+    HP->>H: PluginInboundEvent(pluginId, Request)
+    H->>HP: HostHandshakeRequest
     HP->>L: HostHandshakeRequest（Packet → EventBus）
     L->>D: 加载动态库，查找 milky_plugin_get_api
     L->>D: 校验 ABI 与 API struct_size
     L->>D: on_load(config, hostApi)
     D-->>L: 初始化成功
+    L->>L: 订阅 HostEvent / HostClose
     L->>HP: PluginHandshakeResult.Ready（EventBus → Packet）
     HP->>H: PluginInboundEvent(pluginId, Ready)
+    H->>H: 订阅 PluginClosed / HostClose / 进程退出
     H->>H: 写入 Ready，并启动 closeAwaitJob
     H-->>R: handshake() = true
 ```
@@ -83,11 +90,13 @@ sequenceDiagram
     alt 握手阶段失败
         L-->>H: PluginHandshakeResult.Rejected
         Note over L: 10 秒内未收到请求；动态库/API/ABI 校验失败；或 on_load 返回 MILKY_FALSE
-        H->>H: 取消管道任务、关闭端点
+        H->>H: state = Closing
+        H->>H: 取消管道任务、关闭端点并终止 loader
         H->>H: state = Closed(IOException)
     else 宿主握手等待超时或 loader 提前退出
         H->>H: raceN 得到 Rejected
-        H->>H: 取消管道任务、关闭端点
+        H->>H: state = Closing
+        H->>H: 取消管道任务、关闭端点并终止 loader
         H->>H: state = Closed(IOException)
     else Ready 后关闭
         Note over W: 等待 PluginClosed、HostClose 或 loader 进程退出
@@ -104,8 +113,8 @@ sequenceDiagram
 
 ## loader 侧的结束行为
 
-握手成功后，loader 订阅 `HostEvent` 并调用插件 `on_message`；收到 `HostClose` 时取消消息循环。若循环并非由宿主关闭而结束，loader 会上报 `PluginClosed`。退出前它调用 `on_unload`、释放 host API、关闭管道与动态库，并以 `on_unload` 的返回码退出。
+握手成功后，loader 订阅 `HostEvent` 并调用插件 `on_message`；收到 `HostClose` 时取消消息循环。退出前它调用 `on_unload`、释放 host API、关闭管道与动态库，并以 `on_unload` 的返回码退出。
 
 ## 注册表移除时机
 
-握手失败时，`PluginRegistry.make()` 的异步任务会移除该插件；`Ready` 插件完成关闭流程后，`waitCloseJob` 会在写入 `Closed` 后调用 `PluginRegistry.remove()` 移除该插件。
+握手失败时，`PluginRegistry.make()` 的异步任务会移除该插件；`Ready` 插件完成关闭流程后，`closeAwaitJob` 会在写入 `Closed` 后调用 `PluginRegistry.remove()` 移除该插件。

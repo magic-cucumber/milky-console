@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import okio.Path.Companion.toPath
+import top.kagg886.milky.console.util.eventbus.EventBus
 import kotlin.test.Test
 import kotlin.test.assertNotNull
 import kotlin.test.assertIs
@@ -19,23 +20,23 @@ import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
 
 class PluginLoaderTest {
-//    @Test
-//    fun validPluginCompletesHandshake() = runBlocking {
-//        val container = pluginLoaderTestContainer().toPath()
-//        val registry = PluginRegistry(container)
-//        val plugin = registry.make(container / "plugin" / "plugin-loader-test")
-//
-//        val ready = withTimeout(10.seconds) {
-//            plugin.state.filterIsInstance<Plugin.State.Ready>().first()
-//        }
-//        assertIs<Plugin.State.Ready>(ready)
-//
-//        assertTrue(ready.process.kill())
-//        withTimeout(10.seconds) {
-//            plugin.state.filterIsInstance<Plugin.State.Closed>().first()
-//        }
-//        Unit
-//    }
+    @Test
+    fun validPluginCompletesKilledHandshake() = runBlocking {
+        val container = pluginLoaderTestContainer().toPath()
+        val registry = PluginRegistry(container)
+        val plugin = registry.make(container / "plugin" / "plugin-loader-test")
+
+        val ready = withTimeout(10.seconds) {
+            plugin.state.filterIsInstance<Plugin.State.Ready>().first()
+        }
+        assertIs<Plugin.State.Ready>(ready)
+
+        assertTrue(ready.process.kill())
+        withTimeout(10.seconds) {
+            plugin.state.filterIsInstance<Plugin.State.Closed>().first()
+        }
+        Unit
+    }
 //
 //    @Test
 //    fun getApiCrashClosesPlugin() = runBlocking {

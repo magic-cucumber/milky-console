@@ -2,6 +2,10 @@ package top.kagg886.milky.console.protocol
 
 import kotlinx.serialization.Serializable
 
+@Serializable
+/* plugin is ready to handshake */
+data object PluginHandshakeRequest : MilkyConsoleFromEvent.FromPlugin
+
 /** Host starts a handshake after the loader process and both pipes are ready. */
 @Serializable
 data object HostHandshakeRequest : MilkyConsoleFromEvent.FromHost

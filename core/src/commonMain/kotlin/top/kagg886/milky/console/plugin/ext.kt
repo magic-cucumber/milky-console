@@ -6,11 +6,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
 import okio.Path
 import top.kagg886.milky.console.plugin.config.PluginManifest
 import top.kagg886.milky.console.plugin.lifecycle.PluginInboundEvent
+import top.kagg886.milky.console.plugin.lifecycle.PluginOutboundEvent
 import top.kagg886.milky.console.protocol.MilkyConsoleFromEvent
 import top.kagg886.milky.console.util.eventbus.EventBus
 import top.kagg886.milky.console.util.process.Process
@@ -92,7 +92,7 @@ suspend fun Plugin.send(event: MilkyConsoleFromEvent.FromHost) {
     check(state.value is Plugin.State.Ready) {
         "Plugin's state is not in Ready"
     }
-    EventBus.post(manifest.id to event)
+    EventBus.post(PluginOutboundEvent(manifest.id, event))
 }
 
 suspend fun Plugin.nextEvent(): MilkyConsoleFromEvent.FromPlugin {

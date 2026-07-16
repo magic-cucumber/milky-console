@@ -5,19 +5,8 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.cbor.Cbor
 import kotlinx.serialization.decodeFromByteArray
 import kotlinx.serialization.encodeToByteArray
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.modules.SerializersModule
-import kotlinx.serialization.modules.polymorphic
-import kotlinx.serialization.modules.subclass
 import okio.Buffer
-import top.kagg886.milky.console.protocol.HostClose
-import top.kagg886.milky.console.protocol.HostEvent
-import top.kagg886.milky.console.protocol.HostHandshakeRequest
 import top.kagg886.milky.console.protocol.MilkyConsoleFromEvent
-import top.kagg886.milky.console.protocol.PluginClosed
-import top.kagg886.milky.console.protocol.PluginEvent
-import top.kagg886.milky.console.protocol.PluginHandshakeResult
-import top.kagg886.milky.console.protocol.PluginLog
 
 /**
  * ================================================
@@ -26,33 +15,8 @@ import top.kagg886.milky.console.protocol.PluginLog
  * ================================================
  */
 
-@OptIn(ExperimentalSerializationApi::class)
-//val MilkyConsoleCbor = Cbor {
-//    serializersModule = SerializersModule {
-//        polymorphic(MilkyConsoleFromEvent::class) {
-//            subclass(MilkyConsoleFromEvent.FromHost::class)
-//            subclass(MilkyConsoleFromEvent.FromPlugin::class)
-//        }
-//
-//        polymorphic(MilkyConsoleFromEvent.FromHost::class) {
-//            subclass(HostHandshakeRequest::class)
-//            subclass(HostEvent::class)
-//            subclass(HostClose::class)
-//        }
-//
-//        polymorphic(MilkyConsoleFromEvent.FromPlugin::class) {
-//            subclass(PluginEvent::class)
-//            subclass(PluginClosed::class)
-//            subclass(PluginLog::class)
-//        }
-//
-//        polymorphic(PluginHandshakeResult::class) {
-//            subclass(PluginHandshakeResult.Ready::class)
-//            subclass(PluginHandshakeResult.Rejected::class)
-//        }
-//    }
-//}
 
+@OptIn(ExperimentalSerializationApi::class)
 val MilkyConsoleCbor = Cbor
 
 @OptIn(ExperimentalSerializationApi::class)
