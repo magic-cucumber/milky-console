@@ -66,12 +66,16 @@ object EventBus {
         return subscribers.all { channel -> channel.trySend(event).isSuccess }
     }
 
-    fun <T : Any> subscribe(type: KClass<T>): Flow<T> = flow {
+    fun <T : Any> subscribe(
+        type: KClass<T>,
+        onSubscribed: (() -> Unit)? = null,
+    ): Flow<T> = flow {
         val channel = Channel<Any>(Channel.BUFFERED)
 
         channelsMutex.withLock {
             channels.getOrPut(type) { mutableSetOf() }.add(channel)
         }
+        onSubscribed?.invoke()
 
         try {
             channel.receiveAsFlow().filterIsInstance(type).collect(::emit)
@@ -86,5 +90,7 @@ object EventBus {
         }
     }
 
-    inline fun <reified T : Any> subscribe(): Flow<T> = subscribe(T::class)
+    inline fun <reified T : Any> subscribe(
+        noinline onSubscribed: (() -> Unit)? = null,
+    ): Flow<T> = subscribe(T::class, onSubscribed)
 }

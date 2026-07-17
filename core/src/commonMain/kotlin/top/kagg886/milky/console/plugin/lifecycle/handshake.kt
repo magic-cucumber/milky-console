@@ -4,6 +4,7 @@ import co.touchlab.kermit.Logger
 import co.touchlab.kermit.Severity
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
@@ -45,6 +46,8 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
+private val pluginHandshakeLogger = Logger.withTag("PluginHandshake")
+
 @OptIn(
     ExperimentalForeignApi::class,
     ExperimentalSerializationApi::class,
@@ -53,6 +56,7 @@ import kotlin.uuid.Uuid
 )
 suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     val pluginId = manifest.id
+    pluginHandshakeLogger.i { "enter handshake: id=$pluginId, state=${state.value}" }
     val verified = state.value as Plugin.State.Verified
     val sendPipe = IPCAnonymousPipe.create()
     val receivePipe = IPCAnonymousPipe.create()
@@ -60,14 +64,16 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     // This subscription must exist before the loader can send PluginHandshakeRequest.
     val sendPipeDispatcher = newSingleThreadContext("plugin-$pluginId-pipe-writer")
     val receivePipeDispatcher = newSingleThreadContext("plugin-$pluginId-pipe-reader")
+    val sendPipeSubscribed = CompletableDeferred<Unit>()
     val sendPipeJob = registry.scope.launch(sendPipeDispatcher, start = CoroutineStart.UNDISPATCHED) {
-        EventBus.subscribe<PluginOutboundEvent>()
+        EventBus.subscribe<PluginOutboundEvent> { sendPipeSubscribed.complete(Unit) }
             .filter { it.pluginId == pluginId }
             .collect { (_, event) ->
                 event.toPacket().forEach(sendPipe.sink::writePacket)
             }
     }
     sendPipeJob.invokeOnCompletion { sendPipeDispatcher.close() }
+    sendPipeSubscribed.await()
 
     val receivePipeJob = registry.scope.launch(receivePipeDispatcher) {
         val packetsByGroup = LRUCache.create<Uuid, List<Packet>>(1.minutes, 16 * 1024 * 1024) { _, packets ->
@@ -76,7 +82,8 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
         while (isActive) {
             val packet = try {
                 receivePipe.source.readPacket()
-            } catch (_: Throwable) {
+            } catch (e: Throwable) {
+                pluginHandshakeLogger.w { "receive loop exited without completing normally: id=$pluginId, state=${state.value}, reason=${e.message}" }
                 break
             }
             val merged = if (!packet.isSplit) {
@@ -85,11 +92,13 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                 val group = requireNotNull(packet.group)
                 val packets = packetsByGroup.getOrPut(group) { emptyList() }!! + packet
                 if (packets.size != packet.size) {
+                    pluginHandshakeLogger.d { "stored split packet group=$group: received=${packets.size}/${packet.size}" }
                     packetsByGroup.put(group, packets)
                     continue
                 }
                 val ordered = packets.filter { it.index != null }.sortedBy { it.index }
                 if (!ordered.indices.all { ordered[it].index == it }) {
+                    pluginHandshakeLogger.w { "split packet group=$group has incomplete indexes; waiting for more packets" }
                     packetsByGroup.put(group, packets)
                     continue
                 }
@@ -98,13 +107,17 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             }
             val event = merged.data.readContent<MilkyConsoleFromEvent.FromPlugin>()
             if (event is PluginLog) {
-                Logger.withTag(event.tag).log(
+                pluginHandshakeLogger.withTag("Plugin[$pluginId]").log(
                     Severity.entries.getOrElse(event.level) { Severity.Info },
                     null,
                     event.message,
                 )
             }
             EventBus.postBlocking(PluginInboundEvent(pluginId, event))
+
+            if (event !is PluginLog) {
+                pluginHandshakeLogger.d { "processed inbound event: id=$pluginId, sourceTag=${if (event is PluginLog) event.tag else pluginId}, type=${event::class.simpleName}" }
+            }
         }
     }
     receivePipeJob.invokeOnCompletion { receivePipeDispatcher.close() }
@@ -137,6 +150,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             inheritFD(sendPipe.source.fd, receivePipe.sink.fd)
         }
     } catch (e: Throwable) {
+        pluginHandshakeLogger.e { "process creation failed: id=$pluginId, message=${e.message}" }
         _state.value = Plugin.State.Closing
         pluginHandshakeRequest.cancel()
         pluginHandshakeResult.cancel()
@@ -153,12 +167,14 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                 e,
             )
         )
+        pluginHandshakeLogger.e { "exit handshake unsuccessfully: id=$pluginId, state=${state.value}" }
         return false
     }
 
     sendPipe.source.close()
     receivePipe.sink.close()
     _state.value = Plugin.State.Handshaking(verified.libpath, verified.manifest, verified.config)
+    pluginHandshakeLogger.d { "process started and state entered Handshaking: id=$pluginId" }
 
     // One process waiter is shared by handshake and close lifecycle; waitpid is never called twice.
     val processExit = registry.scope.async { process.await() }
@@ -174,6 +190,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
         pluginHandshakeResult.cancel()
         val error = if (processExit.isCompleted) PluginHandshakeError.PROCESS_EXITED else PluginHandshakeError.TIMEOUT
         val message = if (processExit.isCompleted) "进程意外退出。" else "等待 loader 准备握手超时"
+        pluginHandshakeLogger.e { "loader did not become ready: id=$pluginId, error=$error, message=$message" }
         return closeHandshake(registry, runtime, PluginhandshakeFailedException(message, error))
     }
 
@@ -198,11 +215,16 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     } ?: PluginHandshakeResult.Rejected("握手超时", PluginHandshakeError.TIMEOUT)
 
     return when (result) {
-        PluginHandshakeResult.Ready -> enterReady(registry, runtime)
+        PluginHandshakeResult.Ready -> {
+            pluginHandshakeLogger.i { "handshake accepted: id=$pluginId" }
+            val ready = enterReady(registry, runtime)
+            pluginHandshakeLogger.i { "exit handshake successfully: id=$pluginId, ready=$ready, state=${state.value}" }
+            ready
+        }
         is PluginHandshakeResult.Rejected -> closeHandshake(
             registry,
             runtime,
             PluginhandshakeFailedException(result.message, result.error),
-        )
+        ).also { pluginHandshakeLogger.e { "handshake rejected: id=$pluginId, message=${result.message}, error=${result.error}" } }
     }
 }

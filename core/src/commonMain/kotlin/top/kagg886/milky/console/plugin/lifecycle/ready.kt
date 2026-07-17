@@ -1,5 +1,6 @@
 package top.kagg886.milky.console.plugin.lifecycle
 
+import co.touchlab.kermit.Logger
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
@@ -11,6 +12,8 @@ import top.kagg886.milky.console.protocol.PluginClosed
 import top.kagg886.milky.console.util.eventbus.EventBus
 import top.kagg886.milky.console.util.raceN
 
+private val pluginLifecycleLogger = Logger.withTag("PluginLifecycle")
+
 private sealed interface CloseSignal {
     data object Plugin : CloseSignal
     data object Host : CloseSignal
@@ -18,6 +21,7 @@ private sealed interface CloseSignal {
 }
 
 internal fun Plugin.enterReady(registry: PluginRegistry, runtime: PluginRuntime): Boolean {
+    pluginLifecycleLogger.i { "enter enterReady: state=${state.value}" }
     val handshaking = state.value as Plugin.State.Handshaking
     val pluginId = handshaking.manifest.id
 
@@ -43,6 +47,8 @@ internal fun Plugin.enterReady(registry: PluginRegistry, runtime: PluginRuntime)
             hostClose.cancel()
         }
 
+        pluginLifecycleLogger.i { "close signal received: plugin=$pluginId, signal=$signal" }
+
         _state.value = Plugin.State.Closing
         val status = when (signal) {
             is CloseSignal.Process -> signal.status
@@ -54,6 +60,7 @@ internal fun Plugin.enterReady(registry: PluginRegistry, runtime: PluginRuntime)
         runCatching { runtime.receive.close() }
         _state.value = status.toClosedState()
         registry.remove(this@enterReady)
+        pluginLifecycleLogger.i { "close watcher exit: plugin=$pluginId, state=${state.value}" }
     }
 
     _state.value = Plugin.State.Ready(
@@ -66,5 +73,6 @@ internal fun Plugin.enterReady(registry: PluginRegistry, runtime: PluginRuntime)
         closeAwaitJob,
     )
     closeAwaitJob.start()
+    pluginLifecycleLogger.i { "exit enterReady successfully: plugin=$pluginId, state=${state.value}" }
     return true
 }
