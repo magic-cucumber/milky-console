@@ -126,6 +126,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             inheritFD(sendPipe.source.fd, receivePipe.sink.fd)
         }
     } catch (e: Throwable) {
+        _state.value = Plugin.State.Closing
         pluginHandshakeRequest.cancel()
         pluginHandshakeResult.cancel()
         sendPipeJob.cancel()
@@ -134,7 +135,6 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
         sendPipe.source.close()
         receivePipe.sink.close()
         receivePipe.source.close()
-        _state.value = Plugin.State.Closing
         _state.value = Plugin.State.Closed(
             PluginhandshakeFailedException(
                 "无法启动插件进程: ${e.message}",

@@ -10,9 +10,7 @@ import co.touchlab.kermit.Logger
  */
 
 fun List<Int>.isContinuous(): Boolean {
-    
     val result = size <= 1 || zipWithNext().all { (a, b) -> b == a + 1 }
-    
     
     return result
 }

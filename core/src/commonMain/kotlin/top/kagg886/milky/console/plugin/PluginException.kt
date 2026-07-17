@@ -9,7 +9,6 @@ import top.kagg886.milky.console.protocol.PluginHandshakeError
 open class PluginException(override val message: String? = null, override val cause: Throwable? = null) :
     IOException(message = message, cause = cause) {
     init {
-        
     }
 }
 

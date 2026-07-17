@@ -17,23 +17,18 @@ class Plugin(val basePath: Path) {
     val state: StateFlow<State> = _state.asStateFlow()
 
     val manifestPath by lazy {
-        
         basePath / "manifest.json"
     }
 
     val defaultConfigPath by lazy {
-        
         basePath / "default-config.json"
     }
 
     val platformPath by lazy {
-        
         basePath / "platform"
     }
 
     init {
-        
-        
         
     }
 

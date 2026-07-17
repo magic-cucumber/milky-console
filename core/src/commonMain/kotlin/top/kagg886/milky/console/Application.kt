@@ -7,7 +7,5 @@ import co.touchlab.kermit.Logger
 object Application {
     init {
         
-        
-        
     }
 }

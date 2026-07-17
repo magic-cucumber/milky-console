@@ -15,7 +15,6 @@ data class PluginManifest(
     val description: String
 ) {
     init {
-        
     }
 }
 
@@ -27,7 +26,6 @@ data class ManifestMetadata(
     val protocolVersion: Int
 ) {
     init {
-        
     }
 }
 
@@ -37,6 +35,5 @@ data class ManifestVersion(
     val code: Int
 ) {
     init {
-        
     }
 }
