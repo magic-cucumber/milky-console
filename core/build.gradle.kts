@@ -13,6 +13,7 @@ plugins {
     alias(libs.plugins.buildConfig)
     alias(libs.plugins.ksp)
     alias(libs.plugins.androidx.room3)
+    id("milky.native-cmake")
 }
 
 kotlin {
@@ -109,39 +110,18 @@ data class PluginLoaderFileNameTransformer(
     override fun transform(fileName: String): String? = loaderExecutable
 }
 
-val nativePluginProjects = file("src/commonTest/native")
+val nativePluginSourceDirectory = file("src/commonTest/native")
+
+val nativePluginProjects = nativePluginSourceDirectory
     .listFiles()
     .orEmpty()
     .filter { it.isDirectory && it.resolve("CMakeLists.txt").isFile }
 
-val processPluginBuildTasks = nativePluginProjects.map { pluginProject ->
-    tasks.register<Exec>("process${pluginProject.name.replaceFirstChar(Char::uppercase)}Build") {
-        workingDir = pluginProject
-        when {
-            System.getProperty("os.name").startsWith("Win") -> commandLine(
-                "powershell", "-NoProfile", "-Command",
-                $$"""
-                    cmake -S . -B build;
-                    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                    cmake --build build --config Debug;
-                    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-                """.trimIndent()
-            )
-            System.getProperty("os.name").startsWith("Linux") ||
-                System.getProperty("os.name").startsWith("Mac") -> commandLine(
-                "bash", "-c",
-                """
-                    cmake -S . -B build &&
-                    cmake --build build --config Debug
-                """.trimIndent()
-            )
-            else -> error("Unsupported test platform: ${System.getProperty("os.name")}")
-        }
-        inputs.files(fileTree(pluginProject) {
-            exclude("build/**")
-        })
-        outputs.dir(pluginProject.resolve("build/output"))
-    }
+val nativePluginBuildTasks = nativePluginProjects.associateWith { pluginProject ->
+    nativeCmake.build(
+        baseDir = pluginProject,
+        outputDir = layout.buildDirectory.dir("plugin-test/plugins/${pluginProject.name}"),
+    )
 }
 
 val pluginLoaderTestTarget = run {
@@ -169,12 +149,12 @@ val pluginLoaderTestTarget = run {
 val pluginLoaderTestContainerDirectory = layout.buildDirectory.dir("plugin-test/container")
 
 val preparePluginLoaderTestContainer = tasks.register<Sync>("preparePluginLoaderTestContainer") {
-    dependsOn(processPluginBuildTasks)
+    dependsOn(nativePluginBuildTasks.values)
     dependsOn(pluginLoaderTestTarget.loaderTask)
     inputs.file(pluginLoaderTestTarget.loaderBinary)
     nativePluginProjects.forEach { pluginProject ->
-        from(pluginProject.resolve("build/output")) {
-            into("plugin")
+        from(nativePluginBuildTasks.getValue(pluginProject).flatMap { it.outputDir }) {
+            into("plugin/${pluginProject.name}")
         }
     }
     from(pluginLoaderTestTarget.loaderBinary) {
@@ -186,5 +166,5 @@ val preparePluginLoaderTestContainer = tasks.register<Sync>("preparePluginLoader
 tasks.withType<KotlinNativeTest>().configureEach {
     dependsOn(preparePluginLoaderTestContainer)
     environment("MILKY_PLUGIN_TEST_DIRECTORY", pluginLoaderTestContainerDirectory.get().asFile.absolutePath)
-    environment("MILKY_GRADLE_TEST_LOGGER_LEVEL", gradle.startParameter.logLevel.name)
+    environment("MILKY_GRADLE_TEST_LOGGER_LEVEL", LogLevel.DEBUG)
 }

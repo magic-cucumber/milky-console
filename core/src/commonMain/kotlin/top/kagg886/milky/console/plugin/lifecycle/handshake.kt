@@ -84,6 +84,15 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                 receivePipe.source.readPacket()
             } catch (e: Throwable) {
                 pluginHandshakeLogger.w { "receive loop exited without completing normally: id=$pluginId, state=${state.value}, reason=${e.message}" }
+                // A loader that closes its output before emitting a terminal packet
+                // cannot complete the handshake.  Publish through the normal
+                // terminal-result channel so every handshake failure has one path.
+                EventBus.postBlocking(
+                    PluginInboundEvent(
+                        pluginId,
+                        PluginHandshakeResult.Rejected("进程意外退出。", PluginHandshakeError.PROCESS_EXITED),
+                    ),
+                )
                 break
             }
             val merged = if (!packet.isSplit) {

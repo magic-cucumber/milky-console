@@ -6,6 +6,7 @@ import java.util.Locale
 
 plugins {
     alias(libs.plugins.kotlin.multiplatform)
+    id("milky.native-cmake")
 }
 
 kotlin {
@@ -35,56 +36,14 @@ kotlin {
 
 
 
-val processWindowsBuild = tasks.register<Exec>("processWindowsBuild") {
-    onlyIf {
-        System.getProperty("os.name").startsWith("Win")
-    }
-    workingDir = project.file("src/commonTest/native")
-    commandLine(
-        "powershell", "-NoProfile", "-Command",
-        $$"""
-            cmake -S . -B build;
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            cmake --build build --config Debug;
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-        """.trimIndent()
-    )
-}
-
-val processLinuxBuild = tasks.register<Exec>("processLinuxBuild") {
-    onlyIf {
-        System.getProperty("os.name").startsWith("Linux")
-    }
-    workingDir = project.file("src/commonTest/native")
-    commandLine(
-        "bash", "-c",
-        """
-            mkdir -p build && \
-            cd build && \
-            cmake .. && \
-            make
-        """.trimIndent()
-    )
-}
-
-val processMacOSBuild = tasks.register<Exec>("processMacOSBuild") {
-    onlyIf {
-        System.getProperty("os.name").startsWith("Mac")
-    }
-    workingDir = project.file("src/commonTest/native")
-    commandLine(
-        "bash", "-c",
-        """
-            mkdir -p build && \
-            cd build && \
-            cmake .. && \
-            make
-        """.trimIndent()
-    )
-}
+val nativeTestOutputDirectory = layout.buildDirectory.dir("native-test")
+val nativeTestBuild = nativeCmake.build(
+    baseDir = file("src/commonTest/native"),
+    outputDir = nativeTestOutputDirectory,
+)
 
 tasks.withType<KotlinNativeTest>().configureEach {
-    dependsOn(processWindowsBuild,processLinuxBuild,processMacOSBuild)
+    dependsOn(nativeTestBuild)
 
     val libraryName = providers.systemProperty("os.name")
         .map {
@@ -95,5 +54,5 @@ tasks.withType<KotlinNativeTest>().configureEach {
             }
         }
 
-    environment("DLLOADER_TEST_LIBRARY_PATH", project.file("src/commonTest/native/build/${libraryName.get()}"))
+    environment("DLLOADER_TEST_LIBRARY_PATH", nativeTestOutputDirectory.get().file(libraryName.get()).asFile)
 }
