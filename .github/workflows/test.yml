@@ -42,4 +42,4 @@ jobs:
         run: cmake --version
 
       - name: Run all native tests
-        run: ${{ matrix.gradle-command }} ${{ matrix.test-task }} --stacktrace
+        run: ${{ matrix.gradle-command }} ${{ matrix.test-task }} --info --stacktrace
