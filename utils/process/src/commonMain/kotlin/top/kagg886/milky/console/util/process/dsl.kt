@@ -21,7 +21,6 @@ class ProcessBuilderScope {
     private var executable: String = ""
     private var arguments: MutableList<String> = mutableListOf()
     private var environment: MutableMap<String, String> = mutableMapOf()
-    private var workingDirectory: String? = null
     private var stdin: ProcessConfig.IOOptions = ProcessConfig.IOOptions.Inherited
     private var stdout: ProcessConfig.IOOptions = ProcessConfig.IOOptions.Inherited
     private var stderr: ProcessConfig.IOOptions = ProcessConfig.IOOptions.Inherited
@@ -49,10 +48,6 @@ class ProcessBuilderScope {
         environment.putAll(map)
     }
 
-    fun workingDirectory(value: String) {
-        workingDirectory = value
-    }
-
     fun stdin(value: ProcessConfig.IOOptions) {
         stdin = value
     }
@@ -77,7 +72,6 @@ class ProcessBuilderScope {
         executable = executable,
         arguments = arguments.toList(),
         environment = environment.toMap(),
-        workingDirectory = workingDirectory,
         stdin = stdin,
         stdout = stdout,
         stderr = stderr,

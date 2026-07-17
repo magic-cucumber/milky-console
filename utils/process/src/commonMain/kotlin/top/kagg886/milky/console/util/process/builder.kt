@@ -10,7 +10,6 @@ data class ProcessConfig(
     val executable: String,
     val arguments: List<String> = emptyList(),
     val environment: Map<String, String> = emptyMap(),
-    val workingDirectory: String? = null,
     val stdin: IOOptions = IOOptions.Inherited,
     val stdout: IOOptions = IOOptions.Inherited,
     val stderr: IOOptions = IOOptions.Inherited,
@@ -30,4 +29,3 @@ data class ProcessConfig(
         Redirected,
     }
 }
-

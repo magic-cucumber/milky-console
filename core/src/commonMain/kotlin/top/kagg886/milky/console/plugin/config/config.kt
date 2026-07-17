@@ -4,7 +4,7 @@ import co.touchlab.kermit.Logger
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 
-private val log = Logger.withTag("Config")
+
 
 @Serializable
 data class PluginManifest(
@@ -15,7 +15,7 @@ data class PluginManifest(
     val description: String
 ) {
     init {
-        log.v { "PluginManifest created: id=$id, name=$name, version=${version.name}(${version.code})" }
+        
     }
 }
 
@@ -27,7 +27,7 @@ data class ManifestMetadata(
     val protocolVersion: Int
 ) {
     init {
-        log.v { "ManifestMetadata created: manifestVersion=$manifestVersion, protocolVersion=$protocolVersion" }
+        
     }
 }
 
@@ -37,6 +37,6 @@ data class ManifestVersion(
     val code: Int
 ) {
     init {
-        log.v { "ManifestVersion created: name=$name, code=$code" }
+        
     }
 }

@@ -63,7 +63,7 @@ actual fun Process.Companion.create(config: ProcessConfig): Process {
                 bInheritHandles = 1,
                 dwCreationFlags = 0u,
                 lpEnvironment = environment?.cstr?.getPointer(this),
-                lpCurrentDirectory = config.workingDirectory,
+                lpCurrentDirectory = null,
                 lpStartupInfo = startup.ptr,
                 lpProcessInformation = processInfo.ptr,
             )

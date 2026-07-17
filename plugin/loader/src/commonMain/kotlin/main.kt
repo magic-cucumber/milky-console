@@ -33,6 +33,7 @@ import platform.milky_console_interop.MILKY_RESULT_INVALID_ARGUMENT
 import platform.milky_console_interop.MILKY_RESULT_OK
 import platform.milky_console_interop.milky_console_host_api
 import platform.milky_console_interop.milky_console_plugin_api
+import platform.posix.chdir
 import platform.posix.exit
 import platform.posix.free
 import platform.posix.malloc
@@ -62,12 +63,25 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
+/**
+ *                 receivePipe.sink.fd.toString(),
+ *                 sendPipe.source.fd.toString(),
+ *                 verified.libpath.toString(),
+ *                 Json.encodeToString(verified.config),
+ *                 registry.pluginDataPath(this@handshake).toString()
+ */
 @OptIn(ExperimentalForeignApi::class, ExperimentalSerializationApi::class)
 fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     require(args.size >= 3) { "usage: loader <sink-fd> <source-fd> <library> [config]" }
     val sink = IPCAnonymousPipe.fromSink(args[0].toULong())
     val source = IPCAnonymousPipe.fromSource(args[1].toULong())
-    val config = args.getOrNull(3) ?: "{}"
+    val libpath = args[2]
+    val config = args[3] // "{}"
+    val base = args[4]
+
+    if (chdir(base) != 0) {
+        exit(-1)
+    }
 
     // Register the sender before any loader event is posted.
     val terminalResultWritten = CompletableDeferred<Unit>()
@@ -135,7 +149,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     }
 
     val loader = try {
-        DLLoader(args[2])
+        DLLoader(libpath)
     } catch (e: Throwable) {
         reject("无法加载插件动态库: ${e.message}", PluginHandshakeError.DYNAMIC_LIBRARY_LOAD_FAILED)
     }

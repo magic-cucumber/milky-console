@@ -112,7 +112,6 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     val process = try {
         Process.create {
             context(registry.scope.coroutineContext)
-            workingDirectory(registry.pluginDataPath(this@handshake).toString())
             executable(registry.loaderPath().toString())
             stdin(ProcessConfig.IOOptions.None)
             stdout(ProcessConfig.IOOptions.None)
@@ -122,6 +121,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                 sendPipe.source.fd.toString(),
                 verified.libpath.toString(),
                 Json.encodeToString(verified.config),
+                registry.pluginDataPath(this@handshake).toString()
             )
             inheritFD(sendPipe.source.fd, receivePipe.sink.fd)
         }
