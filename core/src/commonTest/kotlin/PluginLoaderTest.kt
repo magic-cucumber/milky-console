@@ -9,18 +9,87 @@ package top.kagg886.milky.console.plugin
 
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withTimeout
 import okio.Path.Companion.toPath
+import org.ntqqrev.milky.ApiGeneralResponse
+import org.ntqqrev.milky.Event
+import top.kagg886.milky.console.plugin.lifecycle.PluginInboundEvent
+import top.kagg886.milky.console.plugin.lifecycle.PluginOutboundEvent
+import top.kagg886.milky.console.protocol.HostEvent
 import top.kagg886.milky.console.protocol.PluginHandshakeError
+import top.kagg886.milky.console.protocol.PluginApiRequest
+import top.kagg886.milky.console.protocol.PluginApiResponse
+import top.kagg886.milky.console.util.eventbus.EventBus
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.seconds
+import kotlin.time.Duration.Companion.milliseconds
 
 class PluginLoaderTest {
+    @Test
+    fun pluginCanRequestAndAwaitResponseFromOnLoad() = runBlocking {
+        val container = pluginLoaderTestContainer().toPath()
+        val registry = PluginRegistry(container)
+        val pluginId = "plugin-loader-onload-request"
+
+        suspend fun replyToNextRequest() {
+            val request = withTimeout(10.seconds) {
+                EventBus.subscribe<PluginInboundEvent>().first {
+                    it.pluginId == pluginId && it.event is PluginApiRequest
+                }.event as PluginApiRequest
+            }
+            EventBus.post(
+                PluginOutboundEvent(
+                    pluginId,
+                    PluginApiResponse(
+                        type = request.type,
+                        tag = request.tag,
+                        payload = ApiGeneralResponse(status = "ok", retcode = 0),
+                    ),
+                ),
+            )
+        }
+
+        val response = launch(start = CoroutineStart.UNDISPATCHED) { replyToNextRequest() }
+        val plugin = registry.make(container / "plugin" / pluginId)
+        withTimeout(10.seconds) { response.join() }
+        val ready = withTimeout(10.seconds) { plugin.state.filterIsInstance<Plugin.State.Ready>().first() }
+        assertTrue(ready.process.kill())
+        withTimeout(10.seconds) { plugin.state.filterIsInstance<Plugin.State.Closed>().first() }
+        Unit
+    }
+
+    @Test
+    fun pluginCanRequestAndAwaitResponseFromOnMessage() = runBlocking {
+        val container = pluginLoaderTestContainer().toPath()
+        val registry = PluginRegistry(container)
+        val pluginId = "plugin-loader-onmessage-request"
+        val plugin = registry.make(container / "plugin" / pluginId)
+        withTimeout(10.seconds) { plugin.state.filterIsInstance<Plugin.State.Ready>().first() }
+
+        val response = launch(start = CoroutineStart.UNDISPATCHED) {
+            val request = withTimeout(10.seconds) {
+                EventBus.subscribe<PluginInboundEvent>().first {
+                    it.pluginId == pluginId && it.event is PluginApiRequest
+                }.event as PluginApiRequest
+            }
+            EventBus.post(PluginOutboundEvent(pluginId, PluginApiResponse(request.type, request.tag, ApiGeneralResponse("ok", 0))))
+        }
+        EventBus.post(PluginOutboundEvent(pluginId, HostEvent(Event.BotOffline(0, 0, Event.BotOffline.Data("test")))))
+        withTimeout(10.seconds) { response.join() }
+        assertEquals(null, withTimeoutOrNull(250.milliseconds) { plugin.state.filterIsInstance<Plugin.State.Closed>().first() })
+        assertTrue((plugin.state.value as Plugin.State.Ready).process.kill())
+        withTimeout(10.seconds) { plugin.state.filterIsInstance<Plugin.State.Closed>().first() }
+        Unit
+    }
+
     @Test
     fun validPluginCompletesKilledHandshake() = runBlocking {
         val container = pluginLoaderTestContainer().toPath()

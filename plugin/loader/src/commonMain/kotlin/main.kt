@@ -4,14 +4,18 @@ import co.touchlab.kermit.Severity
 import kotlinx.cinterop.*
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.ExperimentalSerializationApi
 import org.ntqqrev.milky.milkyJsonModule
@@ -33,6 +37,8 @@ import top.kagg886.saltify.console.util.dlloader.DLLoader
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.uuid.Uuid
 
 /**
@@ -42,7 +48,13 @@ import kotlin.uuid.Uuid
  *                 Json.encodeToString(verified.config),
  *                 registry.pluginDataPath(this@handshake).toString()
  */
-@OptIn(ExperimentalForeignApi::class, ExperimentalSerializationApi::class)
+@OptIn(
+    ExperimentalForeignApi::class,
+    ExperimentalSerializationApi::class,
+    DelicateCoroutinesApi::class,
+    ExperimentalCoroutinesApi::class,
+    ExperimentalAtomicApi::class,
+)
 fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     require(args.size >= 3) { "usage: loader <sink-fd> <source-fd> <library> [config]" }
     val sink = IPCAnonymousPipe.fromSink(args[0].toULong())
@@ -55,11 +67,25 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         exit(-1)
     }
 
-    // Register the sender before any loader event is posted.
+    // send_message is synchronous: serialize direct callback writes with the
+    // regular EventBus sender so returning means the request is already in the pipe.
     val terminalResultWritten = CompletableDeferred<Unit>()
-    val sender = launch(start = CoroutineStart.UNDISPATCHED) {
-        EventBus.subscribe<MilkyConsoleFromEvent.FromPlugin>().collect { event ->
+    val pipeWriteLock = AtomicBoolean(false)
+    val writeEvent: (MilkyConsoleFromEvent.FromPlugin) -> Unit = { event ->
+        while (!pipeWriteLock.compareAndSet(false, true)) {
+            // Pipe writes are short and contention only occurs with the single sender.
+        }
+        try {
             event.toPacket().forEach(sink::writePacket)
+        } finally {
+            pipeWriteLock.store(false)
+        }
+    }
+    val pipeWriterDispatcher = newSingleThreadContext("plugin-pipe-writer")
+    val pipeReaderDispatcher = newSingleThreadContext("plugin-pipe-reader")
+    val sender = launch(pipeWriterDispatcher, start = CoroutineStart.UNDISPATCHED) {
+        EventBus.subscribe<MilkyConsoleFromEvent.FromPlugin>().collect { event ->
+            writeEvent(event)
             if (event is PluginHandshakeResult) terminalResultWritten.complete(Unit)
         }
     }
@@ -76,7 +102,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         EventBus.subscribe<HostHandshakeRequest>().first()
     }
 
-    val receiver = launch {
+    val receiver = launch(pipeReaderDispatcher) {
         val packetsByGroup = LRUCache.create<Uuid, List<Packet>>(1.minutes, 16 * 1024 * 1024) { _, packets ->
             packets.sumOf { it.data.size }
         }
@@ -99,7 +125,12 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
                 packetsByGroup.remove(group)
                 ordered.merge()
             }
-            EventBus.post(merged.data.readContent<MilkyConsoleFromEvent.FromHost>())
+            val event = merged.data.readContent<MilkyConsoleFromEvent.FromHost>()
+            if (event is PluginApiResponse) {
+                PendingPluginApiRequests.complete(event)
+            } else {
+                EventBus.postBlocking(event)
+            }
         }
     }
 
@@ -108,6 +139,8 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         terminalResultWritten.await()
         receiver.cancel()
         sender.cancel()
+        pipeReaderDispatcher.close()
+        pipeWriterDispatcher.close()
         sink.close()
         source.close()
         exit(1)
@@ -154,12 +187,9 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     }
 
     val hostApi = malloc(sizeOf<milky_console_host_api>().toULong())!!.reinterpret<milky_console_host_api>()
-    PendingPluginApiRequests.initialize(this)
-
-    launch(start = CoroutineStart.UNDISPATCHED) {
-        EventBus.subscribe<PluginApiResponse>().collect {
-            PendingPluginApiRequests.complete(it)
-        }
+    PendingPluginApiRequests.initialize { request ->
+        writeEvent(request)
+        true
     }
 
     hostApi.pointed.abi_version = MILKY_CONSOLE_HOST_ABI_VERSION
@@ -183,8 +213,12 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
             }
         }
 
-        PendingPluginApiRequests.register(event)
-
+        if (!PendingPluginApiRequests.register(event)) {
+            return@staticCFunction cValue {
+                uuid[0] = 0
+                result = MILKY_RESULT_INTERNAL_ERROR
+            }
+        }
         return@staticCFunction cValue {
             event.tag.toString().encodeToByteArray().usePinned { bytes ->
                 memcpy(
@@ -230,33 +264,44 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
             }
         }
 
-        milkyJsonModule.encodeToString(result.payload).usePinned {
-            if (size < it.get().length.toUInt() + 1u) {
+        milkyJsonModule.encodeToString(result.payload).encodeToByteArray().usePinned {
+            val byteCount = it.get().size
+            if (size < byteCount.toUInt() + 1u) {
                 return@staticCFunction cValue {
                     this.result = MILKY_RESULT_BUFFER_TOO_SHORT
-                    required_size = it.get().length.toULong() + 1u
+                    required_size = byteCount.toULong() + 1u
                 }
             }
 
             memcpy(
                 buffer,
                 it.addressOf(0),
-                it.get().length.convert()
+                byteCount.convert()
             )
 
-            buffer[it.get().length] = 0
+            buffer[byteCount] = 0
+            PendingPluginApiRequests.remove(uuid)
 
             return@staticCFunction cValue {
                 this.result = MILKY_RESULT_OK
-                required_size = it.get().length.toULong() + 1u
+                required_size = byteCount.toULong() + 1u
             }
         }
     }
 
-    val loaded = memScoped {
-        api.on_load!!.invoke(config.cstr.getPointer(this), hostApi)
+    val callbackDispatcher = newSingleThreadContext("plugin-callback")
+    Logger.withTag("PluginLoader").d { "dispatching on_load" }
+    val loaded = withContext(callbackDispatcher) {
+        memScoped {
+            api.on_load!!.invoke(config.cstr.getPointer(this), hostApi)
+        }
+    }
+    Logger.withTag("PluginLoader").d { "on_load completed with result=$loaded" }
+    PendingPluginApiRequests.lastSendFailure()?.let {
+        Logger.withTag("PluginLoader").e { "send_message failed:\n$it" }
     }
     if (loaded == MILKY_FALSE) {
+        callbackDispatcher.close()
         free(hostApi)
         reject("插件初始化失败", PluginHandshakeError.INITIALIZATION_FAILED)
     }
@@ -264,9 +309,13 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     // Ready is sent only after all runtime listeners are registered.
     val hostEvents = launch(start = CoroutineStart.UNDISPATCHED) {
         EventBus.subscribe<HostEvent>().collect { message ->
-            memScoped {
-                api.on_message?.invoke(milkyJsonModule.encodeToString(message.event).cstr.getPointer(this))
+            Logger.withTag("PluginLoader").d { "dispatching on_message" }
+            withContext(callbackDispatcher) {
+                memScoped {
+                    api.on_message?.invoke(milkyJsonModule.encodeToString(message.event).cstr.getPointer(this))
+                }
             }
+            Logger.withTag("PluginLoader").d { "on_message completed" }
         }
     }
     val hostClose = async(start = CoroutineStart.UNDISPATCHED) {
@@ -278,14 +327,17 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     hostClose.await()
     hostEvents.cancelAndJoin()
     val exitCode = try {
-        api.on_unload?.invoke() ?: 0
+        withContext(callbackDispatcher) { api.on_unload?.invoke() ?: 0 }
     } finally {
         receiver.cancel()
         sender.cancel()
+        pipeReaderDispatcher.close()
+        pipeWriterDispatcher.close()
         free(hostApi)
         sink.close()
         source.close()
         loader.close()
+        callbackDispatcher.close()
     }
     exit(exitCode)
 }

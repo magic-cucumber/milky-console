@@ -4,11 +4,14 @@ import co.touchlab.kermit.Logger
 import co.touchlab.kermit.Severity
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
@@ -42,7 +45,12 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
-@OptIn(ExperimentalForeignApi::class, ExperimentalSerializationApi::class)
+@OptIn(
+    ExperimentalForeignApi::class,
+    ExperimentalSerializationApi::class,
+    DelicateCoroutinesApi::class,
+    ExperimentalCoroutinesApi::class,
+)
 suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     val pluginId = manifest.id
     val verified = state.value as Plugin.State.Verified
@@ -50,16 +58,18 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     val receivePipe = IPCAnonymousPipe.create()
 
     // This subscription must exist before the loader can send PluginHandshakeRequest.
-    val sendPipeJob = registry.scope.launch(start = CoroutineStart.UNDISPATCHED) {
+    val sendPipeDispatcher = newSingleThreadContext("plugin-$pluginId-pipe-writer")
+    val receivePipeDispatcher = newSingleThreadContext("plugin-$pluginId-pipe-reader")
+    val sendPipeJob = registry.scope.launch(sendPipeDispatcher, start = CoroutineStart.UNDISPATCHED) {
         EventBus.subscribe<PluginOutboundEvent>()
             .filter { it.pluginId == pluginId }
             .collect { (_, event) ->
                 event.toPacket().forEach(sendPipe.sink::writePacket)
             }
     }
+    sendPipeJob.invokeOnCompletion { sendPipeDispatcher.close() }
 
-    // Pipe data is buffered by the OS, so this blocking reader need not run undispatched.
-    val receivePipeJob = registry.scope.launch {
+    val receivePipeJob = registry.scope.launch(receivePipeDispatcher) {
         val packetsByGroup = LRUCache.create<Uuid, List<Packet>>(1.minutes, 16 * 1024 * 1024) { _, packets ->
             packets.sumOf { it.data.size }
         }
@@ -94,9 +104,10 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                     event.message,
                 )
             }
-            EventBus.post(PluginInboundEvent(pluginId, event))
+            EventBus.postBlocking(PluginInboundEvent(pluginId, event))
         }
     }
+    receivePipeJob.invokeOnCompletion { receivePipeDispatcher.close() }
 
     // UNDISTPATCHED guarantees EventBus has registered both channels before Process.create.
     val pluginHandshakeRequest = registry.scope.async(start = CoroutineStart.UNDISPATCHED) {

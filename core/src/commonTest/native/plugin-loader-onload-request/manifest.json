@@ -1,0 +1,7 @@
+{
+  "metadata": { "manifest_version": 1, "protocol_version": 1 },
+  "id": "plugin-loader-onload-request",
+  "name": "Plugin loader on-load request test",
+  "version": { "name": "1.0.0", "code": 1 },
+  "description": "Native fixture that sends and waits for a host response from on_load"
+}

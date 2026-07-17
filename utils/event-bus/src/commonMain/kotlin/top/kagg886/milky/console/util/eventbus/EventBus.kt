@@ -49,6 +49,23 @@ object EventBus {
         }
     }
 
+    /**
+     * Delivers from a blocking/native callback boundary without suspending.
+     * Subscriber channels are buffered, so only the short registry snapshot is
+     * serialized here; delivery never waits for collectors to run.
+     */
+    fun postBlocking(event: Any): Boolean {
+        while (!channelsMutex.tryLock()) {
+            // Native callback and pipe threads cannot call the suspending post().
+        }
+        val subscribers = try {
+            channels.keys.filter { it.isInstance(event) }.flatMap { channels[it]?.toList().orEmpty() }
+        } finally {
+            channelsMutex.unlock()
+        }
+        return subscribers.all { channel -> channel.trySend(event).isSuccess }
+    }
+
     fun <T : Any> subscribe(type: KClass<T>): Flow<T> = flow {
         val channel = Channel<Any>(Channel.BUFFERED)
 
