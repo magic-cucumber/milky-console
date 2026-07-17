@@ -33,6 +33,7 @@ include(":core")
 include(":plugin:loader")
 include(":plugin:protocol")
 include(":plugin:api")
+include(":plugin:processor")
 
 include(":utils:pipe")
 include(":utils:dlloader")

@@ -40,6 +40,9 @@ extern "C" {
 typedef int milky_bool_t;
 typedef int milky_result_t;
 
+/* A UUID in canonical textual form, plus its terminating NUL byte. */
+#define MILKY_MESSAGE_ID_SIZE 37u
+
 #define MILKY_FALSE ((milky_bool_t)0)
 #define MILKY_TRUE  ((milky_bool_t)1)
 
@@ -50,6 +53,20 @@ typedef int milky_result_t;
 #define MILKY_RESULT_INVALID_ARGUMENT  ((milky_result_t)-1)
 #define MILKY_RESULT_UNSUPPORTED       ((milky_result_t)-2)
 #define MILKY_RESULT_INTERNAL_ERROR    ((milky_result_t)-3)
+#define MILKY_RESULT_TIMEOUT           ((milky_result_t)-4)
+#define MILKY_RESULT_NOT_FOUND         ((milky_result_t)-5)
+#define MILKY_RESULT_BUFFER_TOO_SHORT ((milky_result_t)-6)
+
+typedef struct milky_message_send_result {
+    milky_result_t result;
+    char uuid[MILKY_MESSAGE_ID_SIZE];
+} milky_message_send_result_t;
+
+typedef struct milky_message_wait_result {
+    milky_result_t result;
+    /* Required UTF-8 response bytes, including the terminating NUL byte. */
+    size_t required_size;
+} milky_message_wait_result_t;
 
 /*
  * ABI versions
@@ -73,18 +90,23 @@ typedef struct milky_console_host_api {
     unsigned int abi_version;
     unsigned int struct_size;
 
-    /*
-     * Sends a null-terminated UTF-8 string to the host.
-     *
-     * message must not be NULL. Its data only needs to remain valid for the
-     * duration of the call.
-     */
-    milky_result_t (MILKY_CONSOLE_CALL *send_message)(const char *message);
+
+    milky_message_send_result_t (MILKY_CONSOLE_CALL *send_message)(
+        const char *type,
+        const char *message
+    );
+
+    milky_message_wait_result_t (MILKY_CONSOLE_CALL *wait_message_result)(
+        const char *id,
+        int timeout,
+        char *buffer,
+        size_t buffer_size
+    );
 } milky_console_host_api_t;
 
 #define MILKY_CONSOLE_HOST_API_V1_SIZE \
-    (offsetof(milky_console_host_api_t, send_message) + \
-     sizeof(((milky_console_host_api_t *)0)->send_message))
+    (offsetof(milky_console_host_api_t, wait_message_result) + \
+     sizeof(((milky_console_host_api_t *)0)->wait_message_result))
 
 /*
  * Plugin API

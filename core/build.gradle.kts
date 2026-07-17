@@ -39,6 +39,7 @@ kotlin {
         commonMain.dependencies {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
+            implementation(libs.saltify.core)
             implementation(libs.milky.types)
             implementation(libs.ktor.client.core)
             implementation(libs.ktor.client.content.negotiation)

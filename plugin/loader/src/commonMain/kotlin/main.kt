@@ -1,18 +1,7 @@
 import co.touchlab.kermit.LogWriter
 import co.touchlab.kermit.Logger
 import co.touchlab.kermit.Severity
-import kotlinx.cinterop.CPointer
-import kotlinx.cinterop.ExperimentalForeignApi
-import kotlinx.cinterop.NativePtr
-import kotlinx.cinterop.cstr
-import kotlinx.cinterop.invoke
-import kotlinx.cinterop.memScoped
-import kotlinx.cinterop.pointed
-import kotlinx.cinterop.rawValue
-import kotlinx.cinterop.reinterpret
-import kotlinx.cinterop.sizeOf
-import kotlinx.cinterop.staticCFunction
-import kotlinx.cinterop.toKString
+import kotlinx.cinterop.*
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -26,39 +15,22 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.ExperimentalSerializationApi
 import org.ntqqrev.milky.milkyJsonModule
-import platform.milky_console_interop.MILKY_CONSOLE_HOST_ABI_VERSION
-import platform.milky_console_interop.MILKY_FALSE
-import platform.milky_console_interop.MILKY_RESULT_INTERNAL_ERROR
-import platform.milky_console_interop.MILKY_RESULT_INVALID_ARGUMENT
-import platform.milky_console_interop.MILKY_RESULT_OK
-import platform.milky_console_interop.milky_console_host_api
-import platform.milky_console_interop.milky_console_plugin_api
+import platform.milky_console_interop.*
 import platform.posix.chdir
 import platform.posix.exit
 import platform.posix.free
 import platform.posix.malloc
-import top.kagg886.milky.console.protocol.HostClose
-import top.kagg886.milky.console.protocol.HostEvent
-import top.kagg886.milky.console.protocol.HostHandshakeRequest
-import top.kagg886.milky.console.protocol.MilkyConsoleFromEvent
-import top.kagg886.milky.console.protocol.PluginEvent
-import top.kagg886.milky.console.protocol.PluginHandshakeRequest
-import top.kagg886.milky.console.protocol.PluginHandshakeError
-import top.kagg886.milky.console.protocol.PluginHandshakeResult
-import top.kagg886.milky.console.protocol.PluginLog
+import platform.posix.memcpy
+import top.kagg886.milky.console.protocol.*
 import top.kagg886.milky.console.util.eventbus.EventBus
 import top.kagg886.milky.console.util.eventbus.LRUCache
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipe
 import top.kagg886.milky.console.util.pipe.fromSink
 import top.kagg886.milky.console.util.pipe.fromSource
-import top.kagg886.milky.console.util.protocol.Packet
-import top.kagg886.milky.console.util.protocol.isSplit
-import top.kagg886.milky.console.util.protocol.merge
-import top.kagg886.milky.console.util.protocol.readPacket
-import top.kagg886.milky.console.util.protocol.toPacket
-import top.kagg886.milky.console.util.protocol.writePacket
+import top.kagg886.milky.console.util.protocol.*
 import top.kagg886.milky.console.util.readContent
 import top.kagg886.saltify.console.util.dlloader.DLLoader
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
@@ -182,16 +154,103 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     }
 
     val hostApi = malloc(sizeOf<milky_console_host_api>().toULong())!!.reinterpret<milky_console_host_api>()
+    PendingPluginApiRequests.initialize(this)
+
+    launch(start = CoroutineStart.UNDISPATCHED) {
+        EventBus.subscribe<PluginApiResponse>().collect {
+            PendingPluginApiRequests.complete(it)
+        }
+    }
+
     hostApi.pointed.abi_version = MILKY_CONSOLE_HOST_ABI_VERSION
     hostApi.pointed.struct_size = sizeOf<milky_console_host_api>().toUInt()
-    hostApi.pointed.send_message = staticCFunction { message ->
-        val text = message?.toKString() ?: return@staticCFunction MILKY_RESULT_INVALID_ARGUMENT
-        val event = try {
-            PluginEvent(milkyJsonModule.decodeFromString(text))
-        } catch (_: Throwable) {
-            return@staticCFunction MILKY_RESULT_INVALID_ARGUMENT
+    hostApi.pointed.send_message = staticCFunction { type, message ->
+        val type = type?.toKString() ?: return@staticCFunction cValue {
+            uuid[0] = 0
+            result = MILKY_RESULT_INVALID_ARGUMENT
         }
-        if (EventBus.tryPost(event)) MILKY_RESULT_OK else MILKY_RESULT_INTERNAL_ERROR
+        val text = message?.toKString() ?: return@staticCFunction cValue {
+            uuid[0] = 0
+            result = MILKY_RESULT_INVALID_ARGUMENT
+        }
+
+        val event = try {
+            text.toPluginApiRequest(type)!!
+        } catch (_: Throwable) {
+            return@staticCFunction cValue {
+                uuid[0] = 0
+                result = MILKY_RESULT_INVALID_ARGUMENT
+            }
+        }
+
+        PendingPluginApiRequests.register(event)
+
+        return@staticCFunction cValue {
+            event.tag.toString().encodeToByteArray().usePinned { bytes ->
+                memcpy(
+                    uuid,
+                    bytes.addressOf(0),
+                    bytes.get().size.convert()
+                )
+                uuid[bytes.get().size] = 0
+            }
+        }
+    }
+    hostApi.pointed.wait_message_result = staticCFunction { id, timeout, buffer, size ->
+        if (id == null || timeout <= 0 || size <= 0u || buffer == null || id[36] != 0.toByte()) {
+            return@staticCFunction cValue {
+                result = MILKY_RESULT_INVALID_ARGUMENT
+                required_size = 0u
+            }
+        }
+        val uuid = try {
+            Uuid.parse(id.toKString())
+        } catch (_: IllegalArgumentException) {
+            return@staticCFunction cValue {
+                result = MILKY_RESULT_INVALID_ARGUMENT
+                required_size = 0u
+            }
+        }
+
+        val deferred = PendingPluginApiRequests.get(uuid) ?: return@staticCFunction cValue {
+            result = MILKY_RESULT_INVALID_ARGUMENT
+            required_size = 0u
+        }
+
+        val result = runBlocking {
+            withTimeoutOrNull(timeout.milliseconds) {
+                deferred.await()
+            }
+        }
+
+        if (result == null) {
+            return@staticCFunction cValue {
+                this.result = MILKY_RESULT_TIMEOUT
+                required_size = 0u
+            }
+        }
+
+        milkyJsonModule.encodeToString(result.payload).usePinned {
+            if (size < it.get().length.toUInt() + 1u) {
+                return@staticCFunction cValue {
+                    this.result = MILKY_RESULT_BUFFER_TOO_SHORT
+                    required_size = it.get().length.toULong() + 1u
+                }
+            }
+
+            memcpy(
+                buffer,
+                it.addressOf(0),
+                it.get().length.convert()
+            )
+
+            buffer[it.get().length] = 0
+
+            return@staticCFunction cValue {
+                this.result = MILKY_RESULT_OK
+                required_size = it.get().length.toULong() + 1u
+            }
+        }
     }
 
     val loaded = memScoped {
