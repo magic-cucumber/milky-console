@@ -21,7 +21,7 @@ jobs:
             test-task: linuxX64Test
           - name: Windows
             os: windows-latest
-            gradle-command: .\\gradlew.bat
+            gradle-command: .\gradlew.bat
             test-task: mingwX64Test
           - name: macOS
             os: macos-latest
@@ -41,5 +41,24 @@ jobs:
       - name: Verify CMake
         run: cmake --version
 
-      - name: Run all native tests
-        run: ${{ matrix.gradle-command }} ${{ matrix.test-task }} --info --stacktrace
+      - name: Run all native tests (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -e
+          for attempt in $(seq 1 10); do
+            echo "Native test attempt ${attempt}/10"
+            ${{ matrix.gradle-command }} ${{ matrix.test-task }} ${{ runner.debug == '1' && '--debug' || '--info' }} --stacktrace
+          done
+
+      - name: Run all native tests (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          1..10 | ForEach-Object {
+            Write-Host "Native test attempt $_/10"
+            & '${{ matrix.gradle-command }}' '${{ matrix.test-task }}' '${{ runner.debug == '1' && '--debug' || '--info' }}' '--stacktrace'
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+          }
