@@ -1,0 +1,13 @@
+{
+  "metadata": {
+    "manifest_version": 1,
+    "protocol_version": 1
+  },
+  "id": "top.kagg886.milky.console.sample",
+  "name": "milky-console sample",
+  "version": {
+    "name": "1.0.0",
+    "code": 1
+  },
+  "description": "A basic echo and help plugin implemented with the public milky-console C API."
+}

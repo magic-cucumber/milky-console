@@ -34,6 +34,7 @@ include(":plugin:loader")
 include(":plugin:protocol")
 include(":plugin:api")
 include(":plugin:processor")
+include(":plugin:sample")
 
 include(":utils:pipe")
 include(":utils:dlloader")

@@ -25,6 +25,7 @@ kotlin {
         commonMain.dependencies {
             api(libs.kermit)
             implementation(libs.kotlinx.coroutines.core)
+            implementation(libs.kotlinx.datetime)
         }
 
         commonTest.dependencies {

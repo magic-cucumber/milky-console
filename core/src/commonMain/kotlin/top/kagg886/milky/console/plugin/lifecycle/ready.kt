@@ -58,8 +58,8 @@ internal fun Plugin.enterReady(registry: PluginRegistry, runtime: PluginRuntime)
         runtime.receivePipeJob.cancel()
         runCatching { runtime.send.close() }
         runCatching { runtime.receive.close() }
-        _state.value = status.toClosedState()
         registry.remove(this@enterReady)
+        _state.value = status.toClosedState()
         pluginLifecycleLogger.i { "close watcher exit: plugin=$pluginId, state=${state.value}" }
     }
 

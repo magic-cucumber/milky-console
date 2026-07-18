@@ -33,8 +33,8 @@ internal suspend fun Plugin.closeHandshake(
     runCatching { runtime.receive.close() }
     if (!runtime.processExit.isCompleted) runtime.process.kill()
     runCatching { runtime.processExit.await() }
-    _state.value = Plugin.State.Closed(cause)
     registry.remove(this)
+    _state.value = Plugin.State.Closed(cause)
     pluginLifecycleLogger.i { "exit closeHandshake successfully: state=${state.value}, closedCause=${state.value}" }
     return false
 }

@@ -169,6 +169,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
         sendPipe.source.close()
         receivePipe.sink.close()
         receivePipe.source.close()
+        registry.remove(this)
         _state.value = Plugin.State.Closed(
             PluginhandshakeFailedException(
                 "无法启动插件进程: ${e.message}",

@@ -372,20 +372,12 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     hostClose.await()
     hostEvents.cancelAndJoin()
-    val exitCode = try {
-        logger.i { "enter on_unload callback" }
-        withContext(callbackDispatcher) { api.on_unload?.invoke() ?: 0 }
-    } finally {
-        receiver.cancel()
-        sender.cancel()
-        pipeReaderDispatcher.close()
-        pipeWriterDispatcher.close()
-        free(hostApi)
-        sink.close()
-        source.close()
-        loader.close()
-        callbackDispatcher.close()
-    }
+    logger.i { "enter on_unload callback" }
+    val exitCode = withContext(callbackDispatcher) { api.on_unload?.invoke() ?: 0 }
+    // `exit` is intentional: a blocked pipe reader is a child of runBlocking and
+    // would otherwise keep the loader alive after a successful unload. The OS
+    // releases the pipes and loader resources; the exit code is the plugin's
+    // on_unload result and is observed by the host lifecycle.
     logger.i { "exit main successfully: plugin exitCode=$exitCode" }
     exit(exitCode)
 }

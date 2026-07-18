@@ -11,6 +11,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import okio.FileSystem
 import okio.Path
+import top.kagg886.milky.console.plugin.config.PluginManifest
 import top.kagg886.milky.console.plugin.lifecycle.handshake
 import top.kagg886.milky.console.plugin.lifecycle.verify
 import kotlin.experimental.ExperimentalNativeApi
@@ -21,7 +22,7 @@ private val pluginRegistryLogger = Logger.withTag("PluginRegistry")
 class PluginRegistry(val appBasePath: Path) {
     init {
         pluginRegistryLogger.i { "enter init: appBasePath=$appBasePath" }
-        
+
         if (appBasePath.isAbsolute.not()) {
             pluginRegistryLogger.e { "invalid appBasePath: path is not absolute: $appBasePath" }
             error("appBasePath should be absolute")
@@ -36,13 +37,15 @@ class PluginRegistry(val appBasePath: Path) {
     }
 
     private val _plugins = mutableSetOf<Plugin>()
+    val plugins
+        get() = _plugins.toSet()
     private val pluginsModifyLock = Mutex()
     val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
     suspend fun make(path: Path): Plugin {
         pluginRegistryLogger.i { "enter make: path=$path, plugins=${_plugins.size}" }
         val impl = Plugin(path)
-        if (impl.verify()) {
+        if (impl.verify(this)) {
             pluginRegistryLogger.d { "verify succeeded: pluginId=${impl.manifest.id}" }
             val pluginId = impl.manifest.id
             pluginsModifyLock.withLock {
@@ -52,9 +55,7 @@ class PluginRegistry(val appBasePath: Path) {
             scope.launch {
                 if (!impl.handshake(this@PluginRegistry)) {
                     pluginRegistryLogger.w { "handshake exited unsuccessfully; removing plugin: id=$pluginId" }
-                    pluginsModifyLock.withLock {
-                        _plugins.remove(impl)
-                    }
+                    remove(impl)
                 } else {
                     pluginRegistryLogger.d { "handshake completed successfully: id=$pluginId, state=${impl.state.value}" }
                 }
@@ -66,30 +67,20 @@ class PluginRegistry(val appBasePath: Path) {
         return impl
     }
 
-    fun remove(plugin: Plugin) {
+    internal suspend fun remove(plugin: Plugin) {
         pluginRegistryLogger.i { "enter remove: plugin=${plugin.basePath}, state=${plugin.state.value}" }
-        if (plugin.state.value is Plugin.State.Closed) {
+        pluginsModifyLock.withLock {
             _plugins.remove(plugin)
-            pluginRegistryLogger.d { "removed closed plugin; remaining=${_plugins.size}" }
-        } else {
-            pluginRegistryLogger.v { "remove skipped: plugin is not closed, state=${plugin.state.value}" }
+            pluginRegistryLogger.d { "removed plugin; remaining=${_plugins.size}" }
         }
         pluginRegistryLogger.i { "exit remove: plugin=${plugin.basePath}, remaining=${_plugins.size}" }
     }
-
-    fun pluginConfigPath(plugin: Plugin): Path {
-        pluginRegistryLogger.i { "enter pluginConfigPath: id=${plugin.manifest.id}" }
-        val path = appBasePath / "config" / "${plugin.manifest.id}.json"
-        if (!FileSystem.SYSTEM.exists(path)) {
-            FileSystem.SYSTEM.write(path) {
-                writeUtf8(Json.encodeToString(plugin.config))
-            }
-            pluginRegistryLogger.d { "created plugin config: $path" }
-        } else {
-            pluginRegistryLogger.v { "plugin config already exists: $path" }
-        }
-        pluginRegistryLogger.i { "exit pluginConfigPath: path=$path" }
-        return path
+    /**
+     * Returns the configuration-file path for a manifest that has been parsed but whose plugin
+     * has not entered a manifest-initialized state yet.
+     */
+    internal fun pluginConfigPath(manifest: PluginManifest): Path {
+        return appBasePath / "config" / "${manifest.id}.json"
     }
 
     fun pluginDataPath(plugin: Plugin): Path {
