@@ -9,6 +9,7 @@ import top.kagg886.milky.console.util.pipe.IPCAnonymousPipe
 import top.kagg886.milky.console.util.pipe.create
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 class ProcessTest {
@@ -23,6 +24,21 @@ class ProcessTest {
         }
 
         assertEquals(Process.ExitStatus.Result(7), process.await())
+    }
+
+    @Test
+    fun reportsForcedTermination() = runBlocking {
+        val process = Process.create {
+            executable(nativeTestExecutablePath())
+            argument("--wait-forever")
+            stdin(ProcessConfig.IOOptions.None)
+            stdout(ProcessConfig.IOOptions.None)
+            stderr(ProcessConfig.IOOptions.None)
+        }
+
+        assertTrue(process.kill())
+        assertIs<Process.ExitStatus.Killed>(process.await())
+        Unit
     }
 
     @Test

@@ -7,6 +7,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import top.kagg886.milky.console.plugin.Plugin
 import top.kagg886.milky.console.plugin.PluginRegistry
+import top.kagg886.milky.console.plugin.config
+import top.kagg886.milky.console.plugin.libpath
+import top.kagg886.milky.console.plugin.manifest
 import top.kagg886.milky.console.protocol.HostClose
 import top.kagg886.milky.console.protocol.PluginClosed
 import top.kagg886.milky.console.util.eventbus.EventBus

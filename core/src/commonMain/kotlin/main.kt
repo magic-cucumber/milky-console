@@ -46,15 +46,15 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     val registry = PluginRegistry(base)
 
-    fs.list(pluginBase).map { registry.make(it) }.map { plugin ->
+    val autoReloadPlugins = fs.list(pluginBase).map { registry.make(it) }.map { plugin ->
         async {
             val state = plugin.state.first { it is Plugin.State.Ready || it is Plugin.State.Closed }
             if (state is Plugin.State.Closed) {
                 logger.w("plugin ${plugin.basePath.name} load failed", state.exception)
             }
-            state
+            if (state is Plugin.State.Ready) plugin else null
         }
-    }.awaitAll()
+    }.awaitAll().filterNotNull()
 
     logger.i("load ${registry.plugins.size} plugins")
 
@@ -84,6 +84,16 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
             logger.v("receive event: $it")
             for (plugin in registry.plugins) {
                 EventBus.post(PluginOutboundEvent(plugin.manifest.id, HostEvent(it)))
+            }
+        }
+    }
+
+    val autoReloadJob = launch {
+        for (i in autoReloadPlugins) {
+            i.state.collect {
+                if (it is Plugin.State.Closed && it.exception != null) {
+
+                }
             }
         }
     }

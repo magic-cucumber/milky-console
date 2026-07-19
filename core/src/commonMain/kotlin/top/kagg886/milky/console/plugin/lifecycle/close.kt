@@ -6,11 +6,15 @@ import kotlinx.coroutines.Job
 import okio.IOException
 import top.kagg886.milky.console.plugin.Plugin
 import top.kagg886.milky.console.plugin.PluginRegistry
+import top.kagg886.milky.console.plugin.config
+import top.kagg886.milky.console.plugin.libpath
+import top.kagg886.milky.console.plugin.manifest
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipeSink
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipeSource
 import top.kagg886.milky.console.util.process.Process
 
 private val pluginLifecycleLogger = Logger.withTag("PluginLifecycle")
+
 internal data class PluginRuntime(
     val process: Process,
     val processExit: Deferred<Process.ExitStatus>,
@@ -42,16 +46,20 @@ internal suspend fun Plugin.closeHandshake(
 internal fun Process.ExitStatus.toClosedState(): Plugin.State.Closed {
     pluginLifecycleLogger.i { "enter toClosedState: status=$this" }
     val result = when (this) {
-        Process.ExitStatus.Killed -> {
-            pluginLifecycleLogger.w { "process was killed" }
-            Plugin.State.Closed(IOException("process killed"))
+        is Process.ExitStatus.Killed -> {
+            val detail = signal?.let { " by signal $it" }.orEmpty()
+            pluginLifecycleLogger.w { "process was killed$detail" }
+            Plugin.State.Closed(IOException("process killed$detail"))
         }
+
         is Process.ExitStatus.Result -> if (exitCode == 0) {
             pluginLifecycleLogger.d { "process exited successfully: code=0" }
-            Plugin.State.Closed()
+            Plugin.State.Closed(null)
         } else {
             pluginLifecycleLogger.e { "process exited with failure: code=$exitCode" }
-            Plugin.State.Closed(IOException("process exited with exit code $exitCode"))
+            Plugin.State.Closed(
+                IOException("process exited with exit code $exitCode"),
+            )
         }
     }
     pluginLifecycleLogger.i { "exit toClosedState: result=$result" }
