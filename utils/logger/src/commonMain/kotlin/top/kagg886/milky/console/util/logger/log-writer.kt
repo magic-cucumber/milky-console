@@ -107,6 +107,7 @@ val MilkyConsoleDefaultLogWriter = object : LogWriter() {
 
         val all = buildString {
             message.lineSequence().forEachIndexed { index, line ->
+                if (index > 0) appendLine()
                 if (index == 0) {
                     append(
                         label +

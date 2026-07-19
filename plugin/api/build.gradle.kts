@@ -25,7 +25,6 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(libs.milky.types)
-            implementation(libs.kotlinx.serialization.cbor)
             implementation(libs.okio)
         }
 

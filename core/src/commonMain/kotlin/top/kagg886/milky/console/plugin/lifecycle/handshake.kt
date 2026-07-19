@@ -118,10 +118,17 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             }
             val event = merged.data.readContent<MilkyConsoleFromEvent.FromPlugin>()
             if (event is PluginLog) {
+                val message = buildString {
+                    append(event.message)
+                    if (event.stacktrace != null) {
+                        appendLine()
+                        append(event.stacktrace)
+                    }
+                }
                 pluginHandshakeLogger.withTag("Plugin($pluginId)").log(
                     Severity.entries.getOrElse(event.level) { Severity.Info },
                     null,
-                    event.message,
+                    message,
                 )
             }
             EventBus.postBlocking(PluginInboundEvent(pluginId, event))

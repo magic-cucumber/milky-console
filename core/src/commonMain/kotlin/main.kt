@@ -3,6 +3,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.IO
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterIsInstance
@@ -46,18 +47,43 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     val registry = PluginRegistry(base)
 
-    val autoReloadPlugins = fs.list(pluginBase).map { registry.make(it) }.map { plugin ->
+    fs.list(pluginBase).map { registry.make(it) }.map { plugin ->
         async {
             val state = plugin.state.first { it is Plugin.State.Ready || it is Plugin.State.Closed }
             if (state is Plugin.State.Closed) {
                 logger.w("plugin ${plugin.basePath.name} load failed", state.exception)
             }
-            if (state is Plugin.State.Ready) plugin else null
         }
-    }.awaitAll().filterNotNull()
+    }.awaitAll()
 
     logger.i("load ${registry.plugins.size} plugins")
 
+    val autoReloadJob = launch {
+        val watchedPlugins = registry.plugins.toMutableSet()
+        coroutineScope {
+            fun watch(plugin: Plugin) {
+                launch {
+                    val closed = plugin.state.filterIsInstance<Plugin.State.Closed>().first()
+                    val cause = closed.exception ?: return@launch
+                    logger.w("plugin ${plugin.basePath.name} exited unexpectedly; reloading", cause)
+
+                    if (fs.metadataOrNull(plugin.basePath)?.isDirectory != true) {
+                        logger.i { "plugin ${plugin.basePath.name} was removed; skipping reload" }
+                        return@launch
+                    }
+
+                    val replacement = registry.make(plugin.basePath)
+                    if (replacement in registry.plugins && watchedPlugins.add(replacement)) {
+                        watch(replacement)
+                    } else {
+                        logger.w { "plugin ${plugin.basePath.name} reload did not create a registered plugin" }
+                    }
+                }
+            }
+
+            watchedPlugins.toList().forEach(::watch)
+        }
+    }
 
     val milky = SaltifyApplication {
         connection {
@@ -88,21 +114,12 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         }
     }
 
-    val autoReloadJob = launch {
-        for (i in autoReloadPlugins) {
-            i.state.collect {
-                if (it is Plugin.State.Closed && it.exception != null) {
-
-                }
-            }
-        }
-    }
-
     val ex = milky.exceptionFlow.first()
 
     logger.w(ex.second) { "milky exception" }
 
     job.cancel()
+    autoReloadJob.cancel()
     milky.disconnectEvent()
     milky.close()
 

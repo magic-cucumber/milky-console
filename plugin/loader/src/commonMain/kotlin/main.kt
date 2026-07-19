@@ -39,6 +39,8 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.experimental.ExperimentalNativeApi
+import kotlin.native.setUnhandledExceptionHook
 import kotlin.uuid.Uuid
 
 private val pluginLoaderLogger = Logger.withTag("PluginLoader")
@@ -56,6 +58,7 @@ private val pluginLoaderLogger = Logger.withTag("PluginLoader")
     DelicateCoroutinesApi::class,
     ExperimentalCoroutinesApi::class,
     ExperimentalAtomicApi::class,
+    ExperimentalNativeApi::class,
 )
 fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     val logger = pluginLoaderLogger
@@ -90,6 +93,23 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
             pipeWriteLock.store(false)
         }
     }
+    // This is a last-resort path for Kotlin exceptions that would otherwise
+    // reach a Kotlin/Native boundary and make the runtime abort with SIGABRT.
+    // Write directly instead of using EventBus: its worker may be the one that
+    // failed, while writeEvent is synchronous and serialized by pipeWriteLock.
+    setUnhandledExceptionHook { throwable ->
+        val message = "loader 未处理的 Kotlin 异常: ${throwable.message ?: throwable::class.simpleName}"
+        val reported = runCatching {
+            val stacktrace = throwable.stackTraceToString()
+            writeEvent(PluginLog(Severity.Error.ordinal, "PluginLoader", message, stacktrace))
+            writeEvent(PluginClosed(message, stacktrace))
+        }.isSuccess
+        // The loader cannot safely resume after an exception has escaped a
+        // top-level or worker boundary. A successfully written PluginClosed is
+        // a protocol-complete shutdown, so it exits with code 0; otherwise the
+        // host did not receive the report and must treat it as a failure.
+        exit(if (reported) 0 else 1)
+    }
     val pipeWriterDispatcher = newSingleThreadContext("plugin-pipe-writer")
     val pipeReaderDispatcher = newSingleThreadContext("plugin-pipe-reader")
     val senderSubscribed = CompletableDeferred<Unit>()
@@ -109,8 +129,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     Logger.setLogWriters(object : LogWriter() {
         override fun log(severity: Severity, message: String, tag: String, throwable: Throwable?) {
-            val text = throwable?.let { "$message\n${it.stackTraceToString()}" } ?: message
-            EventBus.tryPost(PluginLog(severity.ordinal, tag, text))
+            EventBus.tryPost(PluginLog(severity.ordinal, tag, message,throwable?.stackTraceToString()))
         }
     })
 

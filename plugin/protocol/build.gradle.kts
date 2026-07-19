@@ -27,7 +27,6 @@ kotlin {
 
             dependencies {
                 implementation(libs.milky.types)
-                implementation(libs.kotlinx.serialization.cbor)
                 implementation(libs.kotlinx.serialization.json)
                 implementation(libs.okio)
             }
