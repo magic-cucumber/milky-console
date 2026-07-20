@@ -208,7 +208,7 @@ private class WindowsProcess(
                 ) == 0
             ) error("GetExitCodeProcess failed: Windows error ${GetLastError()}")
             CloseHandle(handle)
-            if (terminated) Process.ExitStatus.Killed(signal = null) else Process.ExitStatus.Result(exitCode.value.toInt())
+            if (terminated) Process.ExitStatus.Killed else Process.ExitStatus.Result(exitCode.value.toInt())
         }
     }
 

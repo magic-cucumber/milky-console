@@ -18,15 +18,7 @@ interface Process {
     fun kill(): Boolean
 
     sealed interface ExitStatus {
-        /**
-         * The process was terminated by a signal or forcibly terminated by this API.
-         *
-         * On Unix, [signal] is the terminating signal reported by `waitpid` (for
-         * example, `SIGKILL` is 9). Windows does not have POSIX signals, so a
-         * process terminated through [Process.kill] or [Process.shutdown] reports
-         * `null` here.
-         */
-        data class Killed(val signal: Int?) : ExitStatus
+        data object Killed : ExitStatus
         data class Result(val exitCode: Int) : ExitStatus
     }
 

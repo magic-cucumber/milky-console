@@ -213,7 +213,7 @@ private class UnixProcess(
 
     private fun exitStatus(status: Int): Process.ExitStatus =
         if ((status and 0x7f) == 0) Process.ExitStatus.Result((status ushr 8) and 0xff)
-        else Process.ExitStatus.Killed(status and 0x7f)
+        else Process.ExitStatus.Killed
 }
 
 private fun processWithRedirectedIO(process: UnixProcess): Process = when {

@@ -81,14 +81,6 @@ int main(int argc, char **argv) {
         return write_inherited_pipe(argv[2]) == 0 ? 1 : 0;
     }
 
-    if (argc >= 2 && strcmp(argv[1], "--wait-forever") == 0) {
-#ifdef _WIN32
-        Sleep(INFINITE);
-#else
-        for (;;) pause();
-#endif
-    }
-
     fprintf(stderr, "unknown process_test command\n");
     return 2;
 }

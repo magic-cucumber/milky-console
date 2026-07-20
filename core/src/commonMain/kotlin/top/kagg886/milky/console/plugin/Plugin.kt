@@ -11,6 +11,7 @@ import top.kagg886.milky.console.plugin.config.PluginManifest
 import top.kagg886.milky.console.util.process.Process
 
 
+
 class Plugin(val basePath: Path) {
     val _state = MutableStateFlow<State>(State.UnInitialized)
     val state: StateFlow<State> = _state.asStateFlow()
@@ -25,6 +26,10 @@ class Plugin(val basePath: Path) {
 
     val platformPath by lazy {
         basePath / "platform"
+    }
+
+    init {
+        
     }
 
 
