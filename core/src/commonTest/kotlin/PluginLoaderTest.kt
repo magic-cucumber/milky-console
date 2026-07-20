@@ -62,7 +62,7 @@ class PluginLoaderTest {
                 PluginOutboundEvent(
                     pluginId,
                     PluginApiResponse(
-                        type = request.type,
+                        category = request.category,
                         tag = request.tag,
                         payload = ApiGeneralResponse(status = "ok", retcode = 0),
                     ),
@@ -97,7 +97,7 @@ class PluginLoaderTest {
             EventBus.post(
                 PluginOutboundEvent(
                     pluginId,
-                    PluginApiResponse(request.type, request.tag, ApiGeneralResponse("ok", 0))
+                    PluginApiResponse(request.category, request.tag, ApiGeneralResponse("ok", 0))
                 )
             )
         }

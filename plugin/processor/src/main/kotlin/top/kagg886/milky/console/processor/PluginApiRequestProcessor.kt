@@ -68,7 +68,7 @@ class PluginApiRequestProcessor(
                     ?: error("Unable to resolve request type for $endpointName")
                 writer.appendLine("        $endpointName.path -> {")
                 writer.appendLine("            val request = milkyJsonModule.decodeFromJsonElement<$inputType>(rawPayload)")
-                writer.appendLine("            PluginApiRequest(type = type, tag = tag, payload = milkyJsonModule.encodeToJsonElement(request))")
+                writer.appendLine("            PluginApiRequest(category = type, tag = tag, payload = milkyJsonModule.encodeToJsonElement(request))")
                 writer.appendLine("        }")
             }
 
