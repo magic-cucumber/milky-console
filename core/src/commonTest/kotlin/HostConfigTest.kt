@@ -43,7 +43,7 @@ class HostConfigTest {
     fun defaultProvidesALocalConnectionTemplate() {
         val connection = HostConfig.default().connections.single()
 
-        assertEquals("http://localhost:30001", connection.baseUrl)
+        assertEquals("http://localhost:3001", connection.baseUrl)
         assertEquals("", connection.accessToken)
         assertEquals(HostEventConnectionType.WebSocket, connection.events.type)
     }

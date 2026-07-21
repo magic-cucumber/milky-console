@@ -1,6 +1,7 @@
 package top.kagg886.milky.gradle
 
 import org.gradle.api.DefaultTask
+import org.gradle.api.GradleException
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.file.Directory
@@ -38,17 +39,42 @@ abstract class NativeCmakeBuild @Inject constructor(
 
         execOperations.exec {
             workingDir = sourceDirectory
-            commandLine(
-                "cmake",
-                "-S", sourceDirectory.absolutePath,
-                "-B", buildDirectory.absolutePath,
-                "-DMILKY_CMAKE_OUTPUT_DIR=${pluginOutputDirectory.absolutePath}",
+            commandLine(cmakeCommand(sourceDirectory, buildDirectory, pluginOutputDirectory))
+        }.assertNormalExitValue()
+    }
+
+    private fun cmakeCommand(
+        sourceDirectory: File,
+        buildDirectory: File,
+        pluginOutputDirectory: File,
+    ): List<String> {
+        val osName = System.getProperty("os.name").lowercase()
+        return when {
+            osName.startsWith("windows") -> listOf(
+                "pwsh", "-NoProfile", "-Command",
+                """
+                    cmake -S "${sourceDirectory.absolutePath}" -B "${buildDirectory.absolutePath}" "-DMILKY_CMAKE_OUTPUT_DIR=${pluginOutputDirectory.absolutePath}"
+                    if (${ '$' }LASTEXITCODE -ne 0) { exit ${ '$' }LASTEXITCODE }
+                    cmake --build "${buildDirectory.absolutePath}" --config Debug
+                    if (${ '$' }LASTEXITCODE -ne 0) { exit ${ '$' }LASTEXITCODE }
+                """.trimIndent(),
             )
-        }.assertNormalExitValue()
-        execOperations.exec {
-            workingDir = sourceDirectory
-            commandLine("cmake", "--build", buildDirectory.absolutePath, "--config", "Debug")
-        }.assertNormalExitValue()
+            osName.startsWith("linux") -> listOf(
+                "bash", "-c",
+                """
+                    cmake -S "${sourceDirectory.absolutePath}" -B "${buildDirectory.absolutePath}" "-DMILKY_CMAKE_OUTPUT_DIR=${pluginOutputDirectory.absolutePath}" && \\
+                    cmake --build "${buildDirectory.absolutePath}" --config Debug
+                """.trimIndent(),
+            )
+            osName.startsWith("mac") -> listOf(
+                "zsh", "-c",
+                """
+                    cmake -S "${sourceDirectory.absolutePath}" -B "${buildDirectory.absolutePath}" "-DMILKY_CMAKE_OUTPUT_DIR=${pluginOutputDirectory.absolutePath}" && \\
+                    cmake --build "${buildDirectory.absolutePath}" --config Debug
+                """.trimIndent(),
+            )
+            else -> throw GradleException("Unsupported operating system: $osName")
+        }
     }
 }
 

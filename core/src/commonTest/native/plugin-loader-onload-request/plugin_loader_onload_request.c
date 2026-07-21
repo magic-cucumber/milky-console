@@ -4,7 +4,7 @@
 
 static milky_bool_t request_and_wait(const milky_console_host_api_t *host_api) {
     char response[128];
-    milky_message_send_result_t sent = host_api->send_message("/get_login_info", "{}");
+    milky_message_send_result_t sent = host_api->send_message(0, "/get_login_info", "{}");
     if (sent.result != MILKY_RESULT_OK) return MILKY_FALSE;
     milky_message_wait_result_t waited = host_api->wait_message_result(sent.uuid, 5000, response, sizeof(response));
     return waited.result == MILKY_RESULT_OK && strstr(response, "\"status\":\"ok\"") != NULL;
