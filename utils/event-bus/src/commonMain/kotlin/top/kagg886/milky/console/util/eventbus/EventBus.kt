@@ -45,10 +45,9 @@ object EventBus {
             logger.v { "post acquired channels mutex: registeredTypes=${channels.size}" }
             val matchedTypes = channels.keys.filter { it.isInstance(event) }
             logger.d { "post matched subscriber types: eventType=${event::class.simpleName}, typeCount=${matchedTypes.size}" }
-            matchedTypes.map { channels[it]?.toList().orEmpty() }.flatten()
+            matchedTypes.flatMap { channels[it]?.toList().orEmpty() }
         }
         logger.i { "posting event: eventType=${event::class.simpleName}, subscriberCount=${subscribers.size}" }
-
         subscribers.forEach { channel ->
             try {
                 logger.v { "post sending event to subscriber: eventType=${event::class.simpleName}" }
@@ -73,7 +72,7 @@ object EventBus {
             logger.v { "tryPost acquired channels mutex: registeredTypes=${channels.size}" }
             val matchedTypes = channels.keys.filter { it.isInstance(event) }
             logger.d { "tryPost matched subscriber types: eventType=${event::class.simpleName}, typeCount=${matchedTypes.size}" }
-            matchedTypes.map { channels[it]?.toList().orEmpty() }.flatten()
+            matchedTypes.flatMap { channels[it]?.toList().orEmpty() }
         } finally {
             channelsMutex.unlock()
             logger.v { "tryPost released channels mutex: eventType=${event::class.simpleName}" }

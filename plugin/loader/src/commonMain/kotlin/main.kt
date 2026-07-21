@@ -44,13 +44,17 @@ import kotlin.native.setUnhandledExceptionHook
 import kotlin.uuid.Uuid
 
 private val logger = Logger.withTag("PluginLoader")
+private val logTransportTags = setOf("ProtocolJson", "ProtocolPacket", "ProtocolPacketCodec", "UnixPipe", "WindowsPipe")
 
 /**
- *                 receivePipe.sink.fd.toString(),
- *                 sendPipe.source.fd.toString(),
- *                 verified.libpath.toString(),
- *                 Json.encodeToString(verified.config),
- *                 registry.pluginDataPath(this@handshake).toString()
+```kotlin
+receivePipe.sink.fd.toString(),
+sendPipe.source.fd.toString(),
+logPipe.sink.fd.toString(),
+tmp.toString(),
+Json.encodeToString(verified.config),
+registry.pluginDataPath(this@handshake).toString(),
+```
  */
 @OptIn(
     ExperimentalForeignApi::class,
@@ -66,41 +70,53 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         logger.a { "loader crashed before IPC crash reporter was ready: ${throwable.stackTraceToString()}" }
         exit(1)
     }
-    if (args.size < 5) {
-        logger.e { "exit main unsuccessfully: invalid arguments, expected at least 5 but got ${args.size}" }
+    if (args.size < 6) {
+        logger.e { "exit main unsuccessfully: invalid arguments, expected at least 6 but got ${args.size}" }
         exit(1)
     }
     logger.v { "argument validation passed; initializing IPC endpoints" }
     val sink = IPCAnonymousPipe.fromSink(args[0].toULong())
     val source = IPCAnonymousPipe.fromSource(args[1].toULong())
-    val libpath = args[2]
-    val config = args[3] // "{}"
-    val base = args[4]
+    val logSink = IPCAnonymousPipe.fromSink(args[2].toULong())
+    val libpath = args[3]
+    val config = args[4] // "{}"
+    val base = args[5]
 
     if (chdir(base) != 0) {
         logger.e { "working directory setup failed: base=$base" }
         exit(-1)
     }
-    logger.d { "runtime context initialized: sink=${args[0]}, source=${args[1]}, library=$libpath, base=$base" }
-    logger.v { "creating pipe write lock and terminal result guard" }
+    logger.d { "runtime context initialized: sink=${args[0]}, source=${args[1]}, logSink=${args[2]}, library=$libpath, base=$base" }
+    logger.v { "creating business and log pipe write locks" }
 
     // send_message is synchronous: serialize direct callback writes with the
     // regular EventBus sender so returning means the request is already in the pipe.
     val terminalResultWritten = CompletableDeferred<Unit>()
     val pipeWriteLock = AtomicBoolean(false)
+    val logPipeWriteLock = AtomicBoolean(false)
     val writeEvent: (MilkyConsoleFromEvent.FromPlugin) -> Unit = { event ->
-        logger.v { "enter writeEvent: type=${event::class.simpleName}" }
         while (!pipeWriteLock.compareAndSet(expectedValue = false, newValue = true)) {
             // Pipe writes are short and contention only occurs with the single sender.
         }
         try {
+            logger.v { "enter writeEvent: type=${event::class.simpleName}" }
             event.toPacket().forEach(sink::writePacket)
-            if (event !is PluginLog) {
-                logger.v { "wrote plugin event to host: type=${event::class.simpleName}" }
-            }
+            logger.v { "wrote plugin event to host: type=${event::class.simpleName}" }
         } finally {
             pipeWriteLock.store(false)
             logger.v { "exit writeEvent: type=${event::class.simpleName}" }
+        }
+    }
+    val writeLog: (PluginLog) -> Unit = { event ->
+        // A log may span multiple packets. Keep the whole structured record under
+        // one lock so concurrent callbacks cannot interleave multi-line output.
+        while (!logPipeWriteLock.compareAndSet(expectedValue = false, newValue = true)) {
+            // Log records are short; serialize concurrent callbacks at the pipe boundary.
+        }
+        try {
+            event.toPacket().forEach(logSink::writePacket)
+        } finally {
+            logPipeWriteLock.store(false)
         }
     }
     // This is a last-resort path for Kotlin exceptions that would otherwise
@@ -112,7 +128,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         logger.a { "loader crashed after IPC crash reporter was ready: ${throwable.stackTraceToString()}" }
         val reported = runCatching {
             val stacktrace = throwable.stackTraceToString()
-            writeEvent(PluginLog(Severity.Error.ordinal, "PluginLoader", message, stacktrace))
+            writeLog(PluginLog(Severity.Error.ordinal, "PluginLoader", message, stacktrace))
             writeEvent(PluginClosed(message, stacktrace))
         }.isSuccess
         // The loader cannot safely resume after an exception has escaped a
@@ -135,7 +151,6 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
                 logger.d { "terminal handshake result written: ${event::class.simpleName}" }
                 terminalResultWritten.complete(Unit)
             } else {
-                if (event is PluginLog) return@collect
                 logger.v { "non-terminal plugin event written: ${event::class.simpleName}" }
             }
         }
@@ -146,11 +161,14 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     Logger.setLogWriters(object : LogWriter() {
         override fun log(severity: Severity, message: String, tag: String, throwable: Throwable?) {
+            // The transport's codec and pipe operations are instrumented with Kermit.
+            // Keep those implementation details local so writing a log cannot log itself.
+            if (tag in logTransportTags) return
             val pluginLogger = Logger.withTag(tag)
-            EventBus.tryPost(PluginLog(severity.ordinal, pluginLogger.tag, message,throwable?.stackTraceToString()))
+            writeLog(PluginLog(severity.ordinal, pluginLogger.tag, message, throwable?.stackTraceToString()))
         }
     })
-    logger.d { "logger bridge installed: forwards plugin logs to host" }
+    logger.d { "logger bridge installed: forwards plugin logs through dedicated pipe" }
 
     // This is the readiness condition represented by PluginHandshakeRequest.
     val hostHandshakeRequest = async(start = CoroutineStart.UNDISPATCHED) {

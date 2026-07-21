@@ -10,4 +10,4 @@ import kotlinx.serialization.Serializable
  */
 
 @Serializable
-data class PluginLog(val level: Int, val tag: String, val message: String,val stacktrace: String? = null) : MilkyConsoleFromEvent.FromPlugin
+data class PluginLog(val level: Int, val tag: String, val message: String,val stacktrace: String? = null)

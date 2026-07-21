@@ -63,7 +63,8 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     val verified = state.value as Plugin.State.Verified
     val sendPipe = IPCAnonymousPipe.create()
     val receivePipe = IPCAnonymousPipe.create()
-    logger.d { "anonymous pipes created: id=$pluginId" }
+    val logPipe = IPCAnonymousPipe.create()
+    logger.d { "business and log pipes created: id=$pluginId" }
     // EventBus intentionally does not replay events.  Keep terminal handshake
     // state locally as well, so a pipe reader cannot publish a request/result
     // before a separately scheduled EventBus collector has registered.
@@ -128,20 +129,6 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                 ordered.merge()
             }
             val event = merged.data.readContent<MilkyConsoleFromEvent.FromPlugin>()
-            if (event is PluginLog) {
-                val message = buildString {
-                    append(event.message)
-                    if (event.stacktrace != null) {
-                        appendLine()
-                        append(event.stacktrace)
-                    }
-                }
-                logger.withTag("${pluginName}(${pluginId}))").log(
-                    Severity.entries.getOrElse(event.level) { Severity.Info },
-                    null,
-                    message,
-                )
-            }
             EventBus.postBlocking(PluginInboundEvent(pluginId, event))
 
             when (event) {
@@ -156,12 +143,55 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                 else -> logger.v { "non-handshake inbound event: id=$pluginId, type=${event::class.simpleName}" }
             }
 
-            if (event !is PluginLog) {
-                logger.d { "processed inbound event: id=$pluginId, sourceTag=$pluginId, type=${event::class.simpleName}" }
-            }
+            logger.d { "processed inbound event: id=$pluginId, sourceTag=$pluginId, type=${event::class.simpleName}" }
         }
     }
     receivePipeJob.invokeOnCompletion { receivePipeDispatcher.close() }
+
+    val logPipeDispatcher = newSingleThreadContext("plugin-$pluginId-log-reader")
+    val logPipeJob = registry.scope.launch(logPipeDispatcher) {
+        logger.v { "enter log pipe loop: id=$pluginId" }
+        val packetsByGroup = LRUCache.create<Uuid, List<Packet>>(1.minutes, 16 * 1024 * 1024) { _, packets ->
+            packets.sumOf { it.data.size }
+        }
+        while (isActive) {
+            val packet = try {
+                logPipe.source.readPacket()
+            } catch (e: Throwable) {
+                logger.v { "log pipe loop ended: id=$pluginId, reason=${e.message}" }
+                break
+            }
+            val merged = if (!packet.isSplit) {
+                packet
+            } else {
+                val group = requireNotNull(packet.group)
+                val packets = packetsByGroup.getOrPut(group) { emptyList() }!! + packet
+                if (packets.size != packet.size) {
+                    packetsByGroup.put(group, packets)
+                    continue
+                }
+                val ordered = packets.filter { it.index != null }.sortedBy { it.index }
+                if (!ordered.indices.all { ordered[it].index == it }) {
+                    packetsByGroup.put(group, packets)
+                    continue
+                }
+                packetsByGroup.remove(group)
+                ordered.merge()
+            }
+            val event = merged.data.readContent<PluginLog>()
+            val message = buildString {
+                append(event.message)
+                event.stacktrace?.let { appendLine().append(it) }
+            }
+            logger.withTag("${pluginName}($pluginId)").log(
+                Severity.entries.getOrElse(event.level) { Severity.Info },
+                null,
+                message,
+            )
+        }
+        logger.v { "exit log pipe loop: id=$pluginId" }
+    }
+    logPipeJob.invokeOnCompletion { logPipeDispatcher.close() }
 
     //copy libpath to other than we can hotfix when we replace plugin
     val tmp = with(verified.libpath.name) {
@@ -187,11 +217,12 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             arguments(
                 receivePipe.sink.fd.toString(),
                 sendPipe.source.fd.toString(),
+                logPipe.sink.fd.toString(),
                 tmp.toString(),
                 Json.encodeToString(verified.config),
-                registry.pluginDataPath(this@handshake).toString()
+                registry.pluginDataPath(this@handshake).toString(),
             )
-            inheritFD(sendPipe.source.fd, receivePipe.sink.fd)
+            inheritFD(sendPipe.source.fd, receivePipe.sink.fd, logPipe.sink.fd)
         }
     } catch (e: Throwable) {
         logger.e { "process creation failed: id=$pluginId, message=${e.message}" }
@@ -200,10 +231,13 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
         pluginHandshakeResult.cancel()
         sendPipeJob.cancel()
         receivePipeJob.cancel()
+        logPipeJob.cancel()
         sendPipe.sink.close()
         sendPipe.source.close()
         receivePipe.sink.close()
         receivePipe.source.close()
+        logPipe.sink.close()
+        logPipe.source.close()
         registry.remove(this)
         _state.value = Plugin.State.Closed(
             PluginCloseReason.HandshakeFailed(
@@ -220,6 +254,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
 
     sendPipe.source.close()
     receivePipe.sink.close()
+    logPipe.sink.close()
     _state.value = Plugin.State.Handshaking(verified.libpath, verified.manifest, verified.config)
     logger.d { "process started and state entered Handshaking: id=$pluginId" }
 

@@ -169,5 +169,7 @@ val preparePluginLoaderTestContainer = tasks.register<Sync>("preparePluginLoader
 tasks.withType<KotlinNativeTest>().configureEach {
     dependsOn(preparePluginLoaderTestContainer)
     environment("MILKY_PLUGIN_TEST_DIRECTORY", pluginLoaderTestContainerDirectory.get().asFile.absolutePath)
+
+    project.logger.lifecycle("MILKY_GRADLE_TEST_LOGGER_LEVEL: ${gradle.startParameter.logLevel.name}")
     environment("MILKY_GRADLE_TEST_LOGGER_LEVEL", gradle.startParameter.logLevel.name)
 }
