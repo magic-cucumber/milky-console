@@ -72,6 +72,8 @@ kotlin {
             // The plugin consumes the public C ABI and Milky event/API models only.
             implementation(project(":plugin:api"))
             implementation(libs.milky.types)
+            implementation(libs.okio)
+            implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kotlinx.serialization.json)
         }
     }

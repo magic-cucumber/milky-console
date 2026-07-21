@@ -16,6 +16,7 @@ import kotlinx.coroutines.newSingleThreadContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
+import okio.FileSystem
 import top.kagg886.milky.console.plugin.Plugin
 import top.kagg886.milky.console.plugin.exception.PluginhandshakeFailedException
 import top.kagg886.milky.console.plugin.PluginRegistry
@@ -43,6 +44,7 @@ import top.kagg886.milky.console.util.protocol.toPacket
 import top.kagg886.milky.console.util.protocol.writePacket
 import top.kagg886.milky.console.util.raceN
 import top.kagg886.milky.console.util.readContent
+import kotlin.experimental.ExperimentalNativeApi
 import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
@@ -53,10 +55,11 @@ private val pluginHandshakeLogger = Logger.withTag("PluginHandshake")
     ExperimentalForeignApi::class,
     ExperimentalSerializationApi::class,
     DelicateCoroutinesApi::class,
-    ExperimentalCoroutinesApi::class,
+    ExperimentalCoroutinesApi::class, ExperimentalNativeApi::class,
 )
 suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     val pluginId = manifest.id
+    val pluginName = manifest.name
     pluginHandshakeLogger.i { "enter handshake: id=$pluginId, state=${state.value}" }
     val verified = state.value as Plugin.State.Verified
     val sendPipe = IPCAnonymousPipe.create()
@@ -124,7 +127,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                         append(event.stacktrace)
                     }
                 }
-                pluginHandshakeLogger.withTag("Plugin($pluginId)").log(
+                pluginHandshakeLogger.withTag("${pluginName}(${pluginId}))").log(
                     Severity.entries.getOrElse(event.level) { Severity.Info },
                     null,
                     message,
@@ -150,6 +153,18 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             .event as PluginHandshakeResult
     }
 
+    //copy libpath to other than we can hotfix when we replace plugin
+    val tmp = with(verified.libpath.name) {
+        val idx = lastIndexOf(".")
+        val name = substring(0, idx)
+        val ext = substring(idx + 1, length)
+        val libs = Platform.osFamily != OsFamily.WINDOWS
+
+        FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "${if (libs) "lib" else ""}$name-${Uuid.random().toHexString()}.$ext"
+    }
+    pluginHandshakeLogger.d("copy plugin impl dllib to $tmp")
+    FileSystem.SYSTEM.copy(verified.libpath, tmp)
+
     val process = try {
         Process.create {
             context(registry.scope.coroutineContext)
@@ -160,7 +175,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             arguments(
                 receivePipe.sink.fd.toString(),
                 sendPipe.source.fd.toString(),
-                verified.libpath.toString(),
+                tmp.toString(),
                 Json.encodeToString(verified.config),
                 registry.pluginDataPath(this@handshake).toString()
             )
@@ -179,11 +194,13 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
         receivePipe.source.close()
         registry.remove(this)
         _state.value = Plugin.State.Closed(
-            PluginCloseReason.HandshakeFailed(PluginhandshakeFailedException(
-                "无法启动插件进程: ${e.message}",
-                PluginHandshakeError.PROCESS_START_FAILED,
-                e,
-            ))
+            PluginCloseReason.HandshakeFailed(
+                PluginhandshakeFailedException(
+                    "无法启动插件进程: ${e.message}",
+                    PluginHandshakeError.PROCESS_START_FAILED,
+                    e,
+                )
+            )
         )
         pluginHandshakeLogger.e { "exit handshake unsuccessfully: id=$pluginId, state=${state.value}" }
         return false
@@ -239,6 +256,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             pluginHandshakeLogger.i { "exit handshake successfully: id=$pluginId, ready=$ready, state=${state.value}" }
             ready
         }
+
         is PluginHandshakeResult.Rejected -> closeHandshake(
             registry,
             runtime,
