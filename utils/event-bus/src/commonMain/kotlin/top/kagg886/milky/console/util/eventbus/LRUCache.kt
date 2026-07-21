@@ -64,7 +64,7 @@ interface LRUCache<K : Any, V : Any> {
             maxSize: Long = DEFAULT_MAX_SIZE,
         ): LRUCache<K, ByteArray> {
             logger.v { "enter create byte array cache: ttl=$time, maxSize=$maxSize" }
-            val cache = create(time, maxSize) { _, value ->
+            val cache = create<K, ByteArray>(time, maxSize) { _, value ->
                 val size = value.size.toLong()
                 logger.d { "calculated byte array cache entry size: bytes=$size, expected=${size >= 0}" }
                 size
