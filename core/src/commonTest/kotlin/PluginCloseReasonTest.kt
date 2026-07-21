@@ -1,5 +1,8 @@
 package top.kagg886.milky.console.plugin
 
+import top.kagg886.milky.console.plugin.exception.PluginCloseReason
+import top.kagg886.milky.console.plugin.exception.PluginProcessExitException
+import top.kagg886.milky.console.plugin.exception.PluginReportedCloseException
 import top.kagg886.milky.console.util.process.Process
 import kotlin.test.Test
 import kotlin.test.assertFalse

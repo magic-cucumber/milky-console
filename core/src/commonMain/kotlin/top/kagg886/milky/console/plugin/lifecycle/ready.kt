@@ -6,7 +6,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import top.kagg886.milky.console.plugin.Plugin
-import top.kagg886.milky.console.plugin.PluginCloseReason
+import top.kagg886.milky.console.plugin.exception.PluginCloseReason
 import top.kagg886.milky.console.plugin.PluginRegistry
 import top.kagg886.milky.console.protocol.HostClose
 import top.kagg886.milky.console.protocol.PluginClosed

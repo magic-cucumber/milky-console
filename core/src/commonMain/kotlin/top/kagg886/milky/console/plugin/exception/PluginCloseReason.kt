@@ -1,4 +1,4 @@
-package top.kagg886.milky.console.plugin
+package top.kagg886.milky.console.plugin.exception
 
 import top.kagg886.milky.console.util.process.Process
 

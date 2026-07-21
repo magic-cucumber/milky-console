@@ -17,9 +17,9 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.json.Json
 import top.kagg886.milky.console.plugin.Plugin
-import top.kagg886.milky.console.plugin.PluginhandshakeFailedException
+import top.kagg886.milky.console.plugin.exception.PluginhandshakeFailedException
 import top.kagg886.milky.console.plugin.PluginRegistry
-import top.kagg886.milky.console.plugin.PluginCloseReason
+import top.kagg886.milky.console.plugin.exception.PluginCloseReason
 import top.kagg886.milky.console.plugin.manifest
 import top.kagg886.milky.console.protocol.HostHandshakeRequest
 import top.kagg886.milky.console.protocol.MilkyConsoleFromEvent

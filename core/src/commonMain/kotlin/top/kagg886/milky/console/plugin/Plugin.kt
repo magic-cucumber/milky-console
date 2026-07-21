@@ -1,6 +1,5 @@
 package top.kagg886.milky.console.plugin
 
-import co.touchlab.kermit.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -8,6 +7,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.serialization.json.JsonObject
 import okio.Path
 import top.kagg886.milky.console.plugin.config.PluginManifest
+import top.kagg886.milky.console.plugin.exception.PluginCloseReason
 import top.kagg886.milky.console.util.process.Process
 
 

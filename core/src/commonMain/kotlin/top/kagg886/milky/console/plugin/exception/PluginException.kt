@@ -1,9 +1,8 @@
-package top.kagg886.milky.console.plugin
+package top.kagg886.milky.console.plugin.exception
 
-import co.touchlab.kermit.Logger
 import okio.IOException
 import top.kagg886.milky.console.protocol.PluginHandshakeError
-
+import top.kagg886.milky.console.util.process.Process
 
 
 open class PluginException(override val message: String? = null, override val cause: Throwable? = null) :
@@ -30,5 +29,5 @@ class PluginReportedCloseException(
 )
 
 class PluginProcessExitException(
-    val exitStatus: top.kagg886.milky.console.util.process.Process.ExitStatus,
+    val exitStatus: Process.ExitStatus,
 ) : PluginException("plugin process exited: $exitStatus")

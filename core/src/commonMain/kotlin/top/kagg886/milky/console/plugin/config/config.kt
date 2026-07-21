@@ -13,27 +13,16 @@ data class PluginManifest(
     val name: String,
     val version: ManifestVersion,
     val description: String
-) {
-    init {
-    }
-}
-
+)
 @Serializable
 data class ManifestMetadata(
     @SerialName("manifest_version")
     val manifestVersion: Int,
     @SerialName("protocol_version")
     val protocolVersion: Int
-) {
-    init {
-    }
-}
-
+)
 @Serializable
 data class ManifestVersion(
     val name: String,
     val code: Int
-) {
-    init {
-    }
-}
+)

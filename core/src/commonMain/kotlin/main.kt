@@ -1,17 +1,12 @@
 import co.touchlab.kermit.Logger
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
 import okio.FileSystem
 import okio.Path.Companion.toPath
-import org.ntqqrev.saltify.builtin.plugin.defaultLogging
-import org.ntqqrev.saltify.core.SaltifyApplication
-import org.ntqqrev.saltify.model.EventConnectionState
-import org.ntqqrev.saltify.model.EventConnectionType
 import top.kagg886.milky.console.Application
 import top.kagg886.milky.console.plugin.Plugin
-import top.kagg886.milky.console.plugin.PluginRegistry
+import top.kagg886.milky.console.plugin.config.HostConfig
 import top.kagg886.milky.console.plugin.lifecycle.PluginOutboundEvent
 import top.kagg886.milky.console.plugin.manifest
 import top.kagg886.milky.console.protocol.HostClose
@@ -27,49 +22,46 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     Logger.setLogWriters(listOf(MilkyConsoleDefaultLogWriter))
     Application.init(base)
 
-    val milky = SaltifyApplication {
-        connection {
-            baseUrl = "http://localhost:30001"
-            accessToken = "" // 访问令牌
+    val hostConfig = HostConfig.load(FileSystem.SYSTEM, base / "config.toml")
+    check(hostConfig.connections.isNotEmpty()) { "config.toml must define at least one connection" }
 
-            events {
-                type = EventConnectionType.WebSocket // 可选 WebSocket 或 SSE
-                autoReconnect = true
-            }
-        }
-
-        install(defaultLogging)
+    val bots = hostConfig.connections.map { connection ->
+        connection.createApplication()
     }
 
-    milky.start()
-    milky.connectEvent()
-    milky.eventConnectionStateFlow.first { it is EventConnectionState.Connected }
-    logger.i { "milky connected" }
-
-    val job = launch {
-        logger.d { "start collect event" }
-        milky.eventFlow.collectLatest {
-            logger.v("receive event: $it")
-            for (plugin in Application.plugins) {
-                EventBus.post(PluginOutboundEvent(plugin.manifest.id, HostEvent(it)))
+    val failures = bots.map { bot ->
+        async {
+            val exception = async(start = CoroutineStart.UNDISPATCHED) {
+                bot.exceptionFlow.first().second
+            }
+            try {
+                bot.start()
+                bot.connectEvent()
+                logger.i { "milky event connection started" }
+                exception.await()
+            } catch (throwable: Throwable) {
+                throwable
+            } finally {
+                exception.cancel()
             }
         }
+    }.awaitAll()
+
+    failures.forEach { exception -> logger.w(exception) { "milky exception" } }
+
+    bots.forEach { bot ->
+        bot.disconnectEvent()
+        bot.close()
     }
 
-    val ex = milky.exceptionFlow.first()
-
-    logger.w(ex.second) { "milky exception" }
-
-    job.cancel()
-    milky.disconnectEvent()
-    milky.close()
-
-    Application.plugins.map {
-        EventBus.post(PluginOutboundEvent(it.manifest.id, HostClose("milky server disconnected.")))
+    val closeTask = Application.plugins.map {
+        EventBus.post(PluginOutboundEvent(it.manifest.id, HostClose("all configured bots failed.")))
         async {
             it.state.filterIsInstance<Plugin.State.Closed>().first()
         }
-    }.awaitAll()
+    }
+
+    closeTask.awaitAll()
 
     logger.i("plugin exited successfully.")
 }

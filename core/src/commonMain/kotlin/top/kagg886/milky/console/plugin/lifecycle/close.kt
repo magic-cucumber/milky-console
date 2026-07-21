@@ -4,8 +4,8 @@ import co.touchlab.kermit.Logger
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import top.kagg886.milky.console.plugin.Plugin
-import top.kagg886.milky.console.plugin.PluginCloseReason
-import top.kagg886.milky.console.plugin.PluginhandshakeFailedException
+import top.kagg886.milky.console.plugin.exception.PluginCloseReason
+import top.kagg886.milky.console.plugin.exception.PluginhandshakeFailedException
 import top.kagg886.milky.console.plugin.PluginRegistry
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipeSink
 import top.kagg886.milky.console.util.pipe.IPCAnonymousPipeSource
