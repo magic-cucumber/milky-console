@@ -2,6 +2,7 @@
 
 package top.kagg886.milky.console.util.pipe
 
+import co.touchlab.kermit.Logger
 import kotlinx.cinterop.ExperimentalForeignApi
 import kotlinx.cinterop.IntVar
 import kotlinx.cinterop.addressOf
@@ -26,17 +27,24 @@ import platform.posix.signal
 import platform.posix.strerror
 import platform.posix.write
 
+private val logger = Logger.withTag("UnixPipe")
+
 actual fun IPCAnonymousPipe.Companion.create(): IPCAnonymousPipe = memScoped {
+    logger.v { "enter create" }
     ignoreBrokenPipeSignal()
     val descriptors = allocArray<IntVar>(2)
     if (pipe(descriptors) != 0) {
+        logger.e { "pipe failed; anonymous pipe not opened: errno=$errno" }
         throw errnoIOException("pipe", errno)
     }
 
-    UnixIPCPipe(
+    val pipe = UnixIPCPipe(
         sendFD = descriptors[1].toULong(),
         receiveFD = descriptors[0].toULong(),
     )
+    logger.i { "opened anonymous pipe: sourceFd=${pipe.receiveFD}, sinkFd=${pipe.sendFD}" }
+    logger.v { "exit create successfully: sourceFd=${pipe.receiveFD}, sinkFd=${pipe.sendFD}" }
+    pipe
 }
 
 /**
@@ -44,7 +52,10 @@ actual fun IPCAnonymousPipe.Companion.create(): IPCAnonymousPipe = memScoped {
  * Ignore it process-wide so pipe writes follow this API's error contract instead.
  */
 private fun ignoreBrokenPipeSignal() {
+    logger.v { "enter ignoreBrokenPipeSignal" }
     signal(SIGPIPE, SIG_IGN)
+    logger.d { "SIGPIPE handler configured: ignored=true" }
+    logger.v { "exit ignoreBrokenPipeSignal" }
 }
 
 data class UnixIPCPipe(val sendFD: ULong, val receiveFD: ULong) : IPCAnonymousPipe {
@@ -52,9 +63,21 @@ data class UnixIPCPipe(val sendFD: ULong, val receiveFD: ULong) : IPCAnonymousPi
     override val source: IPCAnonymousPipeSource = IPCAnonymousPipe.fromSource(receiveFD)
 }
 
-actual fun IPCAnonymousPipe.Companion.fromSource(fd: ULong): IPCAnonymousPipeSource = UnixPipeSource(fd)
+actual fun IPCAnonymousPipe.Companion.fromSource(fd: ULong): IPCAnonymousPipeSource {
+    logger.v { "enter fromSource: fd=$fd" }
+    val source = UnixPipeSource(fd)
+    logger.d { "created pipe source wrapper: fd=$fd, expected=true" }
+    logger.v { "exit fromSource: fd=$fd" }
+    return source
+}
 
-actual fun IPCAnonymousPipe.Companion.fromSink(fd: ULong): IPCAnonymousPipeSink = UnixPipeSink(fd)
+actual fun IPCAnonymousPipe.Companion.fromSink(fd: ULong): IPCAnonymousPipeSink {
+    logger.v { "enter fromSink: fd=$fd" }
+    val sink = UnixPipeSink(fd)
+    logger.d { "created pipe sink wrapper: fd=$fd, expected=true" }
+    logger.v { "exit fromSink: fd=$fd" }
+    return sink
+}
 
 private class UnixPipeSource(
     override val fd: ULong,
@@ -66,30 +89,45 @@ private class UnixPipeSource(
     private val unsafeCursor = Buffer.UnsafeCursor()
 
     override fun read(sink: Buffer, byteCount: Long): Long {
+        logger.v { "enter read: fd=$fd, descriptor=$descriptor, byteCount=$byteCount, closed=$closed, sinkSize=${sink.size}" }
         require(byteCount >= 0L) { "byteCount < 0: $byteCount" }
-        if (closed) throw brokenPipe("read", "pipe source is closed")
-        if (byteCount == 0L) return 0L
+        if (closed) {
+            logger.e { "read failed before IO; source is closed: fd=$fd" }
+            throw brokenPipe("read", "pipe source is closed")
+        }
+        if (byteCount == 0L) {
+            logger.d { "read skipped zero-byte request: fd=$fd, expected=true" }
+            logger.v { "exit read: fd=$fd, bytesRead=0" }
+            return 0L
+        }
 
         val initialSize = sink.size
         val cursor = sink.readAndWriteUnsafe(unsafeCursor)
         try {
             val addedCapacity = cursor.expandBuffer(minOf(byteCount, 1024L).toInt())
             val attemptCount = minOf(byteCount, addedCapacity)
+            logger.d { "prepared read buffer: fd=$fd, initialSize=$initialSize, addedCapacity=$addedCapacity, attemptCount=$attemptCount" }
 
             var readError = 0
             val bytesRead = cursor.data!!.usePinned { pinned ->
                 while (true) {
+                    logger.v { "read syscall enter: fd=$fd, attemptCount=$attemptCount" }
                     val result = read(
                         descriptor,
                         pinned.addressOf(cursor.start),
                         attemptCount.toULong(),
                     )
-                    if (result >= 0L) return@usePinned result
+                    if (result >= 0L) {
+                        logger.v { "read syscall exit successfully: fd=$fd, result=$result" }
+                        return@usePinned result
+                    }
                     val error = errno
                     if (error != EINTR) {
                         readError = error
+                        logger.v { "read syscall exit with non-retryable error: fd=$fd, errno=$error" }
                         return@usePinned result
                     }
+                    logger.v { "read syscall interrupted; retrying: fd=$fd" }
                 }
                 @Suppress("UNREACHABLE_CODE")
                 -1L
@@ -97,39 +135,72 @@ private class UnixPipeSource(
 
             cursor.resizeBuffer(initialSize + maxOf(bytesRead, 0L))
 
-            if (bytesRead > 0L) return bytesRead
+            if (bytesRead > 0L) {
+                logger.d { "read completed: fd=$fd, bytesRead=$bytesRead, sinkSize=${sink.size}, expected=true" }
+                logger.v { "exit read successfully: fd=$fd, bytesRead=$bytesRead" }
+                return bytesRead
+            }
             if (bytesRead == 0L) {
+                logger.i { "read reached EOF; closing source: fd=$fd" }
                 markClosed()
+                logger.v { "exit read: fd=$fd, eof=true" }
                 return -1
             }
 
             val error = readError
             if (error == EPIPE || error == EBADF) {
+                logger.i { "read hit closed peer; closing source: fd=$fd, errno=$error" }
                 markClosed()
+                logger.v { "exit read: fd=$fd, eof=true" }
                 return -1
             }
+            logger.e { "read failed: fd=$fd, errno=$error" }
             throw errnoIOException("read", error)
         } finally {
+            logger.v { "closing read cursor: fd=$fd" }
             cursor.close()
         }
     }
 
-    override fun timeout(): Timeout = Timeout.NONE
+    override fun timeout(): Timeout {
+        logger.v { "enter timeout for source: fd=$fd" }
+        logger.d { "source timeout resolved: fd=$fd, timeout=NONE" }
+        logger.v { "exit timeout for source: fd=$fd" }
+        return Timeout.NONE
+    }
 
     override fun close() {
-        if (closed) return
+        logger.v { "enter source close: fd=$fd, closed=$closed" }
+        if (closed) {
+            logger.v { "source close skipped; already closed: fd=$fd" }
+            logger.v { "exit source close: fd=$fd" }
+            return
+        }
         closed = true
         if (close(descriptor) != 0) {
             val error = errno
-            if (error == EBADF) throw brokenPipe("close", errnoMessage(error))
+            if (error == EBADF) {
+                logger.w { "source close saw bad descriptor; treating as broken pipe: fd=$fd, errno=$error" }
+                throw brokenPipe("close", errnoMessage(error))
+            }
+            logger.e { "source close failed: fd=$fd, errno=$error" }
             throw errnoIOException("close", error)
         }
+        logger.i { "closed pipe source: fd=$fd" }
+        logger.v { "exit source close successfully: fd=$fd" }
     }
 
     private fun markClosed() {
-        if (closed) return
+        logger.v { "enter source markClosed: fd=$fd, closed=$closed" }
+        if (closed) {
+            logger.v { "source markClosed skipped; already closed: fd=$fd" }
+            logger.v { "exit source markClosed: fd=$fd" }
+            return
+        }
         closed = true
         close(descriptor)
+        logger.i { "marked pipe source closed: fd=$fd" }
+        logger.v { "exit source markClosed: fd=$fd" }
     }
 }
 
@@ -143,81 +214,139 @@ private class UnixPipeSink(
     private val unsafeCursor = Buffer.UnsafeCursor()
 
     override fun write(source: Buffer, byteCount: Long) {
+        logger.v { "enter write: fd=$fd, descriptor=$descriptor, byteCount=$byteCount, closed=$closed, sourceSize=${source.size}" }
         require(byteCount >= 0L) { "byteCount < 0: $byteCount" }
         require(source.size >= byteCount) { "source.size=${source.size} < byteCount=$byteCount" }
-        if (closed) throw brokenPipe("write", "pipe sink is closed")
+        if (closed) {
+            logger.e { "write failed before IO; sink is closed: fd=$fd" }
+            throw brokenPipe("write", "pipe sink is closed")
+        }
 
         var remaining = byteCount
+        logger.d { "write loop initialized: fd=$fd, remaining=$remaining, expected=${remaining >= 0L}" }
         while (remaining > 0L) {
+            logger.v { "write loop enter: fd=$fd, remaining=$remaining" }
             val cursor = source.readUnsafe(unsafeCursor)
             val bytesWritten: Long
             var writeError = 0
             try {
                 val readableCount = cursor.next()
                 val attemptCount = minOf(remaining, readableCount.toLong())
+                logger.d { "prepared write chunk: fd=$fd, readableCount=$readableCount, attemptCount=$attemptCount" }
                 bytesWritten = cursor.data!!.usePinned { pinned ->
                     while (true) {
+                        logger.v { "write syscall enter: fd=$fd, attemptCount=$attemptCount" }
                         val result = write(
                             descriptor,
                             pinned.addressOf(cursor.start),
                             attemptCount.toULong(),
                         )
-                        if (result >= 0L) return@usePinned result
+                        if (result >= 0L) {
+                            logger.v { "write syscall exit successfully: fd=$fd, result=$result" }
+                            return@usePinned result
+                        }
                         val error = errno
                         if (error != EINTR) {
                             writeError = error
+                            logger.v { "write syscall exit with non-retryable error: fd=$fd, errno=$error" }
                             return@usePinned result
                         }
+                        logger.v { "write syscall interrupted; retrying: fd=$fd" }
                     }
                     @Suppress("UNREACHABLE_CODE")
                     -1L
                 }
             } finally {
+                logger.v { "closing write cursor: fd=$fd" }
                 cursor.close()
             }
 
             if (bytesWritten <= 0L) {
                 val error = writeError
                 if (error == EPIPE || error == EBADF) {
+                    logger.e { "write hit broken pipe: fd=$fd, errno=$error" }
                     markClosed()
                     throw brokenPipe("write", errnoMessage(error))
                 }
+                logger.e { "write failed: fd=$fd, errno=$error" }
                 throw errnoIOException("write", error)
             }
 
             source.skip(bytesWritten)
             remaining -= bytesWritten
+            logger.d { "write chunk completed: fd=$fd, bytesWritten=$bytesWritten, remaining=$remaining, expected=${remaining >= 0L}" }
+            logger.v { "write loop exit: fd=$fd, remaining=$remaining" }
         }
+        logger.i { "wrote pipe data: fd=$fd, byteCount=$byteCount" }
+        logger.v { "exit write successfully: fd=$fd, byteCount=$byteCount" }
     }
 
     override fun flush() {
-        if (closed) throw brokenPipe("flush", "pipe sink is closed")
+        logger.v { "enter flush: fd=$fd, closed=$closed" }
+        if (closed) {
+            logger.e { "flush failed; sink is closed: fd=$fd" }
+            throw brokenPipe("flush", "pipe sink is closed")
+        }
+        logger.d { "flush no-op completed: fd=$fd, expected=true" }
+        logger.v { "exit flush successfully: fd=$fd" }
     }
 
-    override fun timeout(): Timeout = Timeout.NONE
+    override fun timeout(): Timeout {
+        logger.v { "enter timeout for sink: fd=$fd" }
+        logger.d { "sink timeout resolved: fd=$fd, timeout=NONE" }
+        logger.v { "exit timeout for sink: fd=$fd" }
+        return Timeout.NONE
+    }
 
     override fun close() {
-        if (closed) return
+        logger.v { "enter sink close: fd=$fd, closed=$closed" }
+        if (closed) {
+            logger.v { "sink close skipped; already closed: fd=$fd" }
+            logger.v { "exit sink close: fd=$fd" }
+            return
+        }
         closed = true
         if (close(descriptor) != 0) {
             val error = errno
-            if (error == EBADF) throw brokenPipe("close", errnoMessage(error))
+            if (error == EBADF) {
+                logger.w { "sink close saw bad descriptor; treating as broken pipe: fd=$fd, errno=$error" }
+                throw brokenPipe("close", errnoMessage(error))
+            }
+            logger.e { "sink close failed: fd=$fd, errno=$error" }
             throw errnoIOException("close", error)
         }
+        logger.i { "closed pipe sink: fd=$fd" }
+        logger.v { "exit sink close successfully: fd=$fd" }
     }
 
     private fun markClosed() {
-        if (closed) return
+        logger.v { "enter sink markClosed: fd=$fd, closed=$closed" }
+        if (closed) {
+            logger.v { "sink markClosed skipped; already closed: fd=$fd" }
+            logger.v { "exit sink markClosed: fd=$fd" }
+            return
+        }
         closed = true
         close(descriptor)
+        logger.i { "marked pipe sink closed: fd=$fd" }
+        logger.v { "exit sink markClosed: fd=$fd" }
     }
 }
 
 private fun brokenPipe(operation: String, detail: String): BrokenPipeException =
-    BrokenPipeException("$operation failed: $detail", null)
+    BrokenPipeException("$operation failed: $detail", null).also {
+        logger.w { "$operation mapped to BrokenPipeException: detail=$detail" }
+    }
 
 private fun errnoIOException(operation: String, error: Int): IOException =
-    IOException("$operation failed: ${errnoMessage(error)}")
+    IOException("$operation failed: ${errnoMessage(error)}").also {
+        logger.e { "$operation mapped to IOException: errno=$error" }
+    }
 
-private fun errnoMessage(error: Int): String =
-    strerror(error)?.toKString() ?: "errno $error"
+private fun errnoMessage(error: Int): String {
+    logger.v { "enter errnoMessage: errno=$error" }
+    val message = strerror(error)?.toKString() ?: "errno $error"
+    logger.d { "resolved errno message: errno=$error, message=$message" }
+    logger.v { "exit errnoMessage: errno=$error" }
+    return message
+}

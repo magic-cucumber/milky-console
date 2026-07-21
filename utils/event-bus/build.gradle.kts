@@ -11,6 +11,7 @@ kotlin {
         commonMain.dependencies {
             implementation(libs.kotlinx.coroutines.core)
             implementation(libs.kache)
+            implementation(project(":utils:logger"))
         }
 
         commonTest.dependencies {
@@ -18,4 +19,3 @@ kotlin {
         }
     }
 }
-

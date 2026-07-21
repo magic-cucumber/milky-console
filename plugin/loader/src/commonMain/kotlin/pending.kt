@@ -6,7 +6,7 @@ import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 import kotlin.uuid.Uuid
 
-private val pendingApiLogger = Logger.withTag("PendingApi")
+private val logger = Logger.withTag("PendingApi")
 
 /**
  * ================================================
@@ -29,13 +29,13 @@ object PendingPluginApiRequests {
     private lateinit var sendRequest: (PluginApiRequest) -> Boolean
 
     fun initialize(sendRequest: (PluginApiRequest) -> Boolean) {
-        pendingApiLogger.i { "enter initialize" }
+        logger.i { "enter initialize" }
         this.sendRequest = sendRequest
-        pendingApiLogger.i { "exit initialize successfully" }
+        logger.d { "send request bridge initialized: expected=true" }
+        logger.i { "exit initialize successfully" }
     }
 
     fun register(request: PluginApiRequest): Boolean {
-        val logger = pendingApiLogger
         logger.i { "enter register: tag=${request.tag}, pending=${pending.load().size}" }
         // wait_message_result may be called immediately after send_message returns,
         // including from a synchronous native lifecycle callback. Register the
@@ -51,8 +51,12 @@ object PendingPluginApiRequests {
                 logger.v { "pending request registration retried after concurrent update: tag=${request.tag}" }
             }
         }
+        logger.v { "sending pending request to host: tag=${request.tag}" }
         val sent = runCatching { sendRequest(request) }
-            .onFailure { sendFailure.store(it.stackTraceToString()) }
+            .onFailure {
+                logger.e { "send request bridge threw: tag=${request.tag}, message=${it.message}" }
+                sendFailure.store(it.stackTraceToString())
+            }
             .getOrDefault(false)
         if (!sent) {
             logger.e { "send request failed; removing pending entry: tag=${request.tag}" }
@@ -64,29 +68,45 @@ object PendingPluginApiRequests {
     }
 
     fun complete(response: PluginApiResponse) {
-        pendingApiLogger.d { "enter complete: tag=${response.tag}" }
+        logger.d { "enter complete: tag=${response.tag}" }
         val deferred = get(response.tag)
+        if (deferred == null) {
+            logger.w { "complete received without pending request: tag=${response.tag}" }
+        }
         deferred?.complete(response)
-        pendingApiLogger.i { "exit complete: tag=${response.tag}, matched=${deferred != null}" }
+        logger.i { "exit complete: tag=${response.tag}, matched=${deferred != null}" }
     }
 
-    fun get(tag: Uuid): CompletableDeferred<PluginApiResponse>? =
-        pending.load().firstOrNull { it.tag == tag }?.response
+    fun get(tag: Uuid): CompletableDeferred<PluginApiResponse>? {
+        logger.v { "enter get: tag=$tag" }
+        val result = pending.load().firstOrNull { it.tag == tag }?.response
+        logger.d { "get pending result: tag=$tag, found=${result != null}, expected=${result != null}" }
+        logger.v { "exit get: tag=$tag" }
+        return result
+    }
 
-    fun lastSendFailure(): String? = sendFailure.load()
+    fun lastSendFailure(): String? {
+        logger.v { "enter lastSendFailure" }
+        val result = sendFailure.load()
+        logger.d { "last send failure loaded: present=${result != null}" }
+        logger.v { "exit lastSendFailure" }
+        return result
+    }
 
     fun remove(tag: Uuid) {
-        pendingApiLogger.d { "enter remove: tag=$tag" }
+        logger.d { "enter remove: tag=$tag" }
         while (true) {
             val current = pending.load()
             val updated = current.filterNot { it.tag == tag }
             if (updated.size == current.size) {
-                pendingApiLogger.v { "remove skipped: tag not pending=$tag" }
+                logger.v { "remove skipped: tag not pending=$tag" }
                 return
             }
             if (pending.compareAndSet(current, updated)) {
-                pendingApiLogger.i { "exit remove successfully: tag=$tag" }
+                logger.i { "exit remove successfully: tag=$tag, pending=${updated.size}" }
                 return
+            } else {
+                logger.v { "remove retried after concurrent update: tag=$tag" }
             }
         }
     }

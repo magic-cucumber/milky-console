@@ -23,6 +23,7 @@ kotlin {
         commonMain.dependencies {
             implementation(libs.okio)
             implementation(libs.kotlinx.coroutines.core)
+            implementation(project(":utils:logger"))
         }
 
         commonTest.dependencies {

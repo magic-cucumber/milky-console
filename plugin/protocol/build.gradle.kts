@@ -30,7 +30,12 @@ kotlin {
                 implementation(libs.milky.types)
                 implementation(libs.kotlinx.serialization.json)
                 implementation(libs.okio)
+                implementation(libs.kermit)
             }
+        }
+
+        nativeMain.dependencies {
+            implementation(project(":utils:logger"))
         }
 
         commonTest.dependencies {

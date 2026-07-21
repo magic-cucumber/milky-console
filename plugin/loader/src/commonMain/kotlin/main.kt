@@ -43,7 +43,7 @@ import kotlin.experimental.ExperimentalNativeApi
 import kotlin.native.setUnhandledExceptionHook
 import kotlin.uuid.Uuid
 
-private val pluginLoaderLogger = Logger.withTag("PluginLoader")
+private val logger = Logger.withTag("PluginLoader")
 
 /**
  *                 receivePipe.sink.fd.toString(),
@@ -61,9 +61,16 @@ private val pluginLoaderLogger = Logger.withTag("PluginLoader")
     ExperimentalNativeApi::class,
 )
 fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
-    val logger = pluginLoaderLogger
     logger.i { "enter main: argCount=${args.size}" }
-    require(args.size >= 3) { "usage: loader <sink-fd> <source-fd> <library> [config]" }
+    setUnhandledExceptionHook { throwable ->
+        logger.a { "loader crashed before IPC crash reporter was ready: ${throwable.stackTraceToString()}" }
+        exit(1)
+    }
+    if (args.size < 5) {
+        logger.e { "exit main unsuccessfully: invalid arguments, expected at least 5 but got ${args.size}" }
+        exit(1)
+    }
+    logger.v { "argument validation passed; initializing IPC endpoints" }
     val sink = IPCAnonymousPipe.fromSink(args[0].toULong())
     val source = IPCAnonymousPipe.fromSource(args[1].toULong())
     val libpath = args[2]
@@ -75,12 +82,14 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         exit(-1)
     }
     logger.d { "runtime context initialized: sink=${args[0]}, source=${args[1]}, library=$libpath, base=$base" }
+    logger.v { "creating pipe write lock and terminal result guard" }
 
     // send_message is synchronous: serialize direct callback writes with the
     // regular EventBus sender so returning means the request is already in the pipe.
     val terminalResultWritten = CompletableDeferred<Unit>()
     val pipeWriteLock = AtomicBoolean(false)
     val writeEvent: (MilkyConsoleFromEvent.FromPlugin) -> Unit = { event ->
+        logger.v { "enter writeEvent: type=${event::class.simpleName}" }
         while (!pipeWriteLock.compareAndSet(expectedValue = false, newValue = true)) {
             // Pipe writes are short and contention only occurs with the single sender.
         }
@@ -91,6 +100,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
             }
         } finally {
             pipeWriteLock.store(false)
+            logger.v { "exit writeEvent: type=${event::class.simpleName}" }
         }
     }
     // This is a last-resort path for Kotlin exceptions that would otherwise
@@ -99,6 +109,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     // failed, while writeEvent is synchronous and serialized by pipeWriteLock.
     setUnhandledExceptionHook { throwable ->
         val message = "loader 未处理的 Kotlin 异常: ${throwable.message ?: throwable::class.simpleName}"
+        logger.a { "loader crashed after IPC crash reporter was ready: ${throwable.stackTraceToString()}" }
         val reported = runCatching {
             val stacktrace = throwable.stackTraceToString()
             writeEvent(PluginLog(Severity.Error.ordinal, "PluginLoader", message, stacktrace))
@@ -108,13 +119,17 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         // top-level or worker boundary. A successfully written PluginClosed is
         // a protocol-complete shutdown, so it exits with code 0; otherwise the
         // host did not receive the report and must treat it as a failure.
+        logger.e { "exit main after unhandled exception: reported=$reported" }
         exit(if (reported) 0 else 1)
     }
+    logger.v { "IPC crash reporter installed; starting pipe workers" }
     val pipeWriterDispatcher = newSingleThreadContext("plugin-pipe-writer")
     val pipeReaderDispatcher = newSingleThreadContext("plugin-pipe-reader")
     val senderSubscribed = CompletableDeferred<Unit>()
     val sender = launch(pipeWriterDispatcher, start = CoroutineStart.UNDISPATCHED) {
+        logger.v { "enter sender coroutine" }
         EventBus.subscribe<MilkyConsoleFromEvent.FromPlugin> { senderSubscribed.complete(Unit) }.collect { event ->
+            logger.v { "sender received outbound event: type=${event::class.simpleName}" }
             writeEvent(event)
             if (event is PluginHandshakeResult) {
                 logger.d { "terminal handshake result written: ${event::class.simpleName}" }
@@ -124,25 +139,33 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
                 logger.v { "non-terminal plugin event written: ${event::class.simpleName}" }
             }
         }
+        logger.v { "exit sender coroutine" }
     }
     senderSubscribed.await()
+    logger.d { "sender subscription ready: expected=true" }
 
     Logger.setLogWriters(object : LogWriter() {
         override fun log(severity: Severity, message: String, tag: String, throwable: Throwable?) {
-            EventBus.tryPost(PluginLog(severity.ordinal, tag, message,throwable?.stackTraceToString()))
+            val pluginLogger = Logger.withTag(tag)
+            EventBus.tryPost(PluginLog(severity.ordinal, pluginLogger.tag, message,throwable?.stackTraceToString()))
         }
     })
+    logger.d { "logger bridge installed: forwards plugin logs to host" }
 
     // This is the readiness condition represented by PluginHandshakeRequest.
     val hostHandshakeRequest = async(start = CoroutineStart.UNDISPATCHED) {
+        logger.v { "enter host handshake request waiter" }
         EventBus.subscribe<HostHandshakeRequest>().first()
     }
 
     val receiver = launch(pipeReaderDispatcher) {
+        logger.v { "enter receiver coroutine" }
         val packetsByGroup = LRUCache.create<Uuid, List<Packet>>(1.minutes, 16 * 1024 * 1024) { _, packets ->
             packets.sumOf { it.data.size }
         }
+        logger.d { "split packet cache initialized: ttl=1m, maxBytes=${16 * 1024 * 1024}" }
         while (isActive) {
+            logger.v { "receiver waiting for next host packet" }
             val packet = source.readPacket()
             val merged = if (!packet.isSplit) {
                 logger.v { "received complete host packet: bytes=${packet.data.size}" }
@@ -162,6 +185,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
                     continue
                 }
                 packetsByGroup.remove(group)
+                logger.d { "merged host split packet: group=$group, parts=${ordered.size}, bytes=${ordered.sumOf { it.data.size }}" }
                 ordered.merge()
             }
             val event = merged.data.readContent<MilkyConsoleFromEvent.FromHost>()
@@ -173,12 +197,14 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
                 EventBus.postBlocking(event)
             }
         }
+        logger.v { "exit receiver coroutine: active=$isActive" }
     }
 
     suspend fun reject(message: String, error: PluginHandshakeError? = null): Nothing {
         logger.e { "rejecting loader flow: message=$message, error=$error" }
         EventBus.post(PluginHandshakeResult.Rejected(message, error))
         terminalResultWritten.await()
+        logger.v { "terminal rejection written; closing loader resources" }
         receiver.cancel()
         sender.cancel()
         pipeReaderDispatcher.close()
@@ -197,6 +223,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         logger.e { "host handshake request timed out" }
         reject("10秒内没有收到握手包，取消握手", PluginHandshakeError.TIMEOUT)
     }
+    logger.d { "host handshake request received within timeout: expected=true" }
 
     val loader = try {
         logger.d { "loading plugin dynamic library: $libpath" }
@@ -222,6 +249,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         )
     }
     val api = pointer.pointed
+    logger.d { "plugin API struct received: abi=${api.abi_version}, size=${api.struct_size}" }
 
     if (api.abi_version != MILKY_CONSOLE_HOST_ABI_VERSION) {
         logger.e { "ABI mismatch: host=$MILKY_CONSOLE_HOST_ABI_VERSION, plugin=${api.abi_version}" }
@@ -240,7 +268,9 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     }
 
     val hostApi = malloc(sizeOf<milky_console_host_api>().toULong())!!.reinterpret<milky_console_host_api>()
+    logger.v { "allocated host API struct: bytes=${sizeOf<milky_console_host_api>()}" }
     PendingPluginApiRequests.initialize { request ->
+        logger.v { "forwarding plugin API request to host: tag=${request.tag}" }
         writeEvent(request)
         true
     }
@@ -249,20 +279,21 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     hostApi.pointed.struct_size = sizeOf<milky_console_host_api>().toUInt()
     hostApi.pointed.send_message = staticCFunction { uin, type, message ->
         val type = type?.toKString() ?: return@staticCFunction cValue {
-            pluginLoaderLogger.w { "send_message received null type; returning INVALID_ARGUMENT" }
+            logger.w { "send_message received null type; returning INVALID_ARGUMENT" }
             uuid[0] = 0
             result = MILKY_RESULT_INVALID_ARGUMENT
         }
         val text = message?.toKString() ?: return@staticCFunction cValue {
-            pluginLoaderLogger.w { "send_message received null message; returning INVALID_ARGUMENT" }
+            logger.w { "send_message received null message; returning INVALID_ARGUMENT" }
             uuid[0] = 0
             result = MILKY_RESULT_INVALID_ARGUMENT
         }
+        logger.v { "enter send_message: uin=$uin, type=$type, bytes=${text.encodeToByteArray().size}" }
 
         val event = try {
             text.toPluginApiRequest(type)!!.copy(uin = uin)
         } catch (_: Throwable) {
-            pluginLoaderLogger.w { "send_message payload could not be decoded; returning INVALID_ARGUMENT" }
+            logger.w { "send_message payload could not be decoded; returning INVALID_ARGUMENT" }
             return@staticCFunction cValue {
                 uuid[0] = 0
                 result = MILKY_RESULT_INVALID_ARGUMENT
@@ -270,12 +301,13 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         }
 
         if (!PendingPluginApiRequests.register(event)) {
-            pluginLoaderLogger.e { "send_message request registration failed: tag=${event.tag}" }
+            logger.e { "send_message request registration failed: tag=${event.tag}" }
             return@staticCFunction cValue {
                 uuid[0] = 0
                 result = MILKY_RESULT_INTERNAL_ERROR
             }
         }
+        logger.d { "send_message registered request: tag=${event.tag}, expected=true" }
         return@staticCFunction cValue {
             event.tag.toString().encodeToByteArray().usePinned { bytes ->
                 memcpy(
@@ -285,11 +317,13 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
                 )
                 uuid[bytes.get().size] = 0
             }
+            logger.v { "exit send_message successfully: tag=${event.tag}" }
         }
     }
     hostApi.pointed.wait_message_result = staticCFunction { id, timeout, buffer, size ->
+        logger.v { "enter wait_message_result: timeoutMs=$timeout, bufferSize=$size" }
         if (id == null || timeout <= 0 || size <= 0u || buffer == null || id[36] != 0.toByte()) {
-            pluginLoaderLogger.w { "wait_message_result received invalid arguments" }
+            logger.w { "wait_message_result received invalid arguments" }
             return@staticCFunction cValue {
                 result = MILKY_RESULT_INVALID_ARGUMENT
                 required_size = 0u
@@ -298,7 +332,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         val uuid = try {
             Uuid.parse(id.toKString())
         } catch (_: IllegalArgumentException) {
-            pluginLoaderLogger.w { "wait_message_result received invalid UUID" }
+            logger.w { "wait_message_result received invalid UUID" }
             return@staticCFunction cValue {
                 result = MILKY_RESULT_INVALID_ARGUMENT
                 required_size = 0u
@@ -306,10 +340,11 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         }
 
         val deferred = PendingPluginApiRequests.get(uuid) ?: return@staticCFunction cValue {
-            pluginLoaderLogger.w { "wait_message_result has no pending request: tag=$uuid" }
+            logger.w { "wait_message_result has no pending request: tag=$uuid" }
             result = MILKY_RESULT_INVALID_ARGUMENT
             required_size = 0u
         }
+        logger.d { "wait_message_result found pending request: tag=$uuid, expected=true" }
 
         val result = runBlocking {
             withTimeoutOrNull(timeout.milliseconds) {
@@ -318,7 +353,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         }
 
         if (result == null) {
-            pluginLoaderLogger.w { "wait_message_result timed out: tag=$uuid, timeoutMs=$timeout" }
+            logger.w { "wait_message_result timed out: tag=$uuid, timeoutMs=$timeout" }
             return@staticCFunction cValue {
                 this.result = MILKY_RESULT_TIMEOUT
                 required_size = 0u
@@ -328,7 +363,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         milkyJsonModule.encodeToString(result.payload).encodeToByteArray().usePinned {
             val byteCount = it.get().size
             if (size < byteCount.toUInt() + 1u) {
-                pluginLoaderLogger.w { "wait_message_result buffer too short: tag=$uuid, capacity=$size, required=${byteCount + 1}" }
+                logger.w { "wait_message_result buffer too short: tag=$uuid, capacity=$size, required=${byteCount + 1}" }
                 return@staticCFunction cValue {
                     this.result = MILKY_RESULT_BUFFER_TOO_SHORT
                     required_size = byteCount.toULong() + 1u
@@ -345,6 +380,8 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
             PendingPluginApiRequests.remove(uuid)
 
             return@staticCFunction cValue {
+                logger.d { "wait_message_result copied response: tag=$uuid, bytes=$byteCount, expected=true" }
+                logger.v { "exit wait_message_result successfully: tag=$uuid" }
                 this.result = MILKY_RESULT_OK
                 required_size = byteCount.toULong() + 1u
             }
@@ -352,16 +389,23 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     }
 
     val callbackDispatcher = newSingleThreadContext("plugin-callback")
-    pluginLoaderLogger.d { "dispatching on_load" }
-    val loaded = withContext(callbackDispatcher) {
-        memScoped {
-            api.on_load!!.invoke(config.cstr.getPointer(this), hostApi)
+    logger.d { "dispatching on_load" }
+    val loaded = try {
+        withContext(callbackDispatcher) {
+            memScoped {
+                api.on_load!!.invoke(config.cstr.getPointer(this), hostApi)
+            }
         }
+    } catch (e: Throwable) {
+        logger.a { "plugin on_load crashed loader boundary: ${e.stackTraceToString()}" }
+        callbackDispatcher.close()
+        free(hostApi)
+        reject("插件初始化崩溃: ${e.message}", PluginHandshakeError.INITIALIZATION_FAILED)
     }
-    pluginLoaderLogger.d { "on_load completed with result=$loaded" }
+    logger.d { "on_load completed with result=$loaded" }
     logger.i { "on_load execution result: loaded=$loaded, pendingSendFailure=${PendingPluginApiRequests.lastSendFailure() != null}" }
     PendingPluginApiRequests.lastSendFailure()?.let {
-        pluginLoaderLogger.e { "send_message failed:\n$it" }
+        logger.e { "send_message failed:\n$it" }
     }
     if (loaded == MILKY_FALSE) {
         logger.e { "plugin on_load returned MILKY_FALSE" }
@@ -372,17 +416,25 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     // Ready is sent only after all runtime listeners are registered.
     val hostEvents = launch(start = CoroutineStart.UNDISPATCHED) {
+        logger.v { "enter hostEvents coroutine" }
         EventBus.subscribe<HostEvent>().collect { message ->
             logger.d { "enter on_message callback: type=${message.event::class.simpleName}" }
-            withContext(callbackDispatcher) {
-                memScoped {
-                    api.on_message?.invoke(milkyJsonModule.encodeToString(message.event).cstr.getPointer(this))
+            try {
+                withContext(callbackDispatcher) {
+                    memScoped {
+                        api.on_message?.invoke(milkyJsonModule.encodeToString(message.event).cstr.getPointer(this))
+                    }
                 }
+            } catch (e: Throwable) {
+                logger.a { "plugin on_message crashed loader boundary: ${e.stackTraceToString()}" }
+                throw e
             }
             logger.i { "exit on_message callback successfully: type=${message.event::class.simpleName}" }
         }
+        logger.v { "exit hostEvents coroutine" }
     }
     val hostClose = async(start = CoroutineStart.UNDISPATCHED) {
+        logger.v { "enter host close waiter" }
         EventBus.subscribe<HostClose>().first()
     }
     EventBus.post(PluginHandshakeResult.Ready)
@@ -390,9 +442,16 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     terminalResultWritten.await()
 
     hostClose.await()
+    logger.d { "HostClose received: expected=true" }
     hostEvents.cancelAndJoin()
+    logger.d { "host event callback collector cancelled: expected=true" }
     logger.i { "enter on_unload callback" }
-    val exitCode = withContext(callbackDispatcher) { api.on_unload?.invoke() ?: 0 }
+    val exitCode = try {
+        withContext(callbackDispatcher) { api.on_unload?.invoke() ?: 0 }
+    } catch (e: Throwable) {
+        logger.a { "plugin on_unload crashed loader boundary: ${e.stackTraceToString()}" }
+        1
+    }
     // `exit` is intentional: a blocked pipe reader is a child of runBlocking and
     // would otherwise keep the loader alive after a successful unload. The OS
     // releases the pipes and loader resources; the exit code is the plugin's

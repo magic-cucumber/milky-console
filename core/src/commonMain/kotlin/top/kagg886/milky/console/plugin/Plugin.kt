@@ -1,5 +1,6 @@
 package top.kagg886.milky.console.plugin
 
+import co.touchlab.kermit.Logger
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -11,21 +12,30 @@ import top.kagg886.milky.console.plugin.exception.PluginCloseReason
 import top.kagg886.milky.console.util.process.Process
 
 
+private val logger = Logger.withTag("Plugin")
 
 class Plugin(val basePath: Path) {
+    init {
+        logger.i { "enter init: basePath=$basePath" }
+        logger.i { "exit init successfully: basePath=$basePath" }
+    }
+
     val _state = MutableStateFlow<State>(State.UnInitialized)
     val state: StateFlow<State> = _state.asStateFlow()
 
     val manifestPath by lazy {
-        basePath / "manifest.json"
+        logger.v { "enter manifestPath lazy: basePath=$basePath" }
+        (basePath / "manifest.json").also { logger.v { "exit manifestPath lazy: path=$it" } }
     }
 
     val defaultConfigPath by lazy {
-        basePath / "default-config.json"
+        logger.v { "enter defaultConfigPath lazy: basePath=$basePath" }
+        (basePath / "default-config.json").also { logger.v { "exit defaultConfigPath lazy: path=$it" } }
     }
 
     val platformPath by lazy {
-        basePath / "platform"
+        logger.v { "enter platformPath lazy: basePath=$basePath" }
+        (basePath / "platform").also { logger.v { "exit platformPath lazy: path=$it" } }
     }
 
 

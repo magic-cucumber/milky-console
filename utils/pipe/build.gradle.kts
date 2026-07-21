@@ -23,6 +23,7 @@ kotlin {
     sourceSets {
         commonMain.dependencies {
             implementation(libs.okio)
+            implementation(project(":utils:logger"))
         }
 
         commonTest.dependencies {

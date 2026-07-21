@@ -48,7 +48,7 @@ import kotlin.time.Duration.Companion.minutes
 import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
-private val pluginHandshakeLogger = Logger.withTag("PluginHandshake")
+private val logger = Logger.withTag("PluginHandshake")
 
 @OptIn(
     ExperimentalForeignApi::class,
@@ -59,10 +59,11 @@ private val pluginHandshakeLogger = Logger.withTag("PluginHandshake")
 suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     val pluginId = manifest.id
     val pluginName = manifest.name
-    pluginHandshakeLogger.i { "enter handshake: id=$pluginId, state=${state.value}" }
+    logger.i { "enter handshake: id=$pluginId, state=${state.value}" }
     val verified = state.value as Plugin.State.Verified
     val sendPipe = IPCAnonymousPipe.create()
     val receivePipe = IPCAnonymousPipe.create()
+    logger.d { "anonymous pipes created: id=$pluginId" }
     // EventBus intentionally does not replay events.  Keep terminal handshake
     // state locally as well, so a pipe reader cannot publish a request/result
     // before a separately scheduled EventBus collector has registered.
@@ -74,16 +75,21 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     val receivePipeDispatcher = newSingleThreadContext("plugin-$pluginId-pipe-reader")
     val sendPipeSubscribed = CompletableDeferred<Unit>()
     val sendPipeJob = registry.scope.launch(sendPipeDispatcher, start = CoroutineStart.UNDISPATCHED) {
+        logger.v { "enter send pipe loop: id=$pluginId" }
         EventBus.subscribe<PluginOutboundEvent> { sendPipeSubscribed.complete(Unit) }
             .filter { it.pluginId == pluginId }
             .collect { (_, event) ->
+                logger.v { "writing outbound event to loader: id=$pluginId, type=${event::class.simpleName}" }
                 event.toPacket().forEach(sendPipe.sink::writePacket)
+                logger.d { "outbound event written to loader: id=$pluginId, type=${event::class.simpleName}" }
             }
     }
     sendPipeJob.invokeOnCompletion { sendPipeDispatcher.close() }
     sendPipeSubscribed.await()
+    logger.d { "send pipe subscription ready: id=$pluginId" }
 
     val receivePipeJob = registry.scope.launch(receivePipeDispatcher) {
+        logger.v { "enter receive pipe loop: id=$pluginId" }
         val packetsByGroup = LRUCache.create<Uuid, List<Packet>>(1.minutes, 16 * 1024 * 1024) { _, packets ->
             packets.sumOf { it.data.size }
         }
@@ -91,7 +97,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             val packet = try {
                 receivePipe.source.readPacket()
             } catch (e: Throwable) {
-                pluginHandshakeLogger.w { "receive loop exited without completing normally: id=$pluginId, state=${state.value}, reason=${e.message}" }
+                logger.w { "receive loop exited without completing normally: id=$pluginId, state=${state.value}, reason=${e.message}" }
                 // A loader that closes its output before emitting a terminal packet
                 // cannot complete the handshake.  Publish through the normal
                 // terminal-result channel so every handshake failure has one path.
@@ -101,22 +107,24 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                 break
             }
             val merged = if (!packet.isSplit) {
+                logger.v { "received complete inbound packet: id=$pluginId, bytes=${packet.data.size}" }
                 packet
             } else {
                 val group = requireNotNull(packet.group)
                 val packets = packetsByGroup.getOrPut(group) { emptyList() }!! + packet
                 if (packets.size != packet.size) {
-                    pluginHandshakeLogger.d { "stored split packet group=$group: received=${packets.size}/${packet.size}" }
+                    logger.d { "stored split packet group=$group: received=${packets.size}/${packet.size}" }
                     packetsByGroup.put(group, packets)
                     continue
                 }
                 val ordered = packets.filter { it.index != null }.sortedBy { it.index }
                 if (!ordered.indices.all { ordered[it].index == it }) {
-                    pluginHandshakeLogger.w { "split packet group=$group has incomplete indexes; waiting for more packets" }
+                    logger.w { "split packet group=$group has incomplete indexes; waiting for more packets" }
                     packetsByGroup.put(group, packets)
                     continue
                 }
                 packetsByGroup.remove(group)
+                logger.d { "merged split packet group=$group: parts=${ordered.size}" }
                 ordered.merge()
             }
             val event = merged.data.readContent<MilkyConsoleFromEvent.FromPlugin>()
@@ -128,7 +136,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                         append(event.stacktrace)
                     }
                 }
-                pluginHandshakeLogger.withTag("${pluginName}(${pluginId}))").log(
+                logger.withTag("${pluginName}(${pluginId}))").log(
                     Severity.entries.getOrElse(event.level) { Severity.Info },
                     null,
                     message,
@@ -137,13 +145,19 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             EventBus.postBlocking(PluginInboundEvent(pluginId, event))
 
             when (event) {
-                is PluginHandshakeRequest -> pluginHandshakeRequest.complete(Unit)
-                is PluginHandshakeResult -> pluginHandshakeResult.complete(event)
-                else -> Unit
+                is PluginHandshakeRequest -> {
+                    logger.i { "plugin handshake request received: id=$pluginId" }
+                    pluginHandshakeRequest.complete(Unit)
+                }
+                is PluginHandshakeResult -> {
+                    logger.i { "plugin handshake result received: id=$pluginId, result=$event" }
+                    pluginHandshakeResult.complete(event)
+                }
+                else -> logger.v { "non-handshake inbound event: id=$pluginId, type=${event::class.simpleName}" }
             }
 
             if (event !is PluginLog) {
-                pluginHandshakeLogger.d { "processed inbound event: id=$pluginId, sourceTag=${if (event is PluginLog) event.tag else pluginId}, type=${event::class.simpleName}" }
+                logger.d { "processed inbound event: id=$pluginId, sourceTag=$pluginId, type=${event::class.simpleName}" }
             }
         }
     }
@@ -158,10 +172,12 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
 
         FileSystem.SYSTEM_TEMPORARY_DIRECTORY / "${if (libs) "lib" else ""}$name-${Uuid.random().toHexString()}.$ext"
     }
-    pluginHandshakeLogger.d("copy plugin impl dllib to $tmp")
+    logger.d("copy plugin impl dllib to $tmp")
     FileSystem.SYSTEM.copy(verified.libpath, tmp)
+    logger.d { "plugin library copied: id=$pluginId, source=${verified.libpath}, target=$tmp" }
 
     val process = try {
+        logger.d { "creating plugin process: id=$pluginId" }
         Process.create {
             context(registry.scope.coroutineContext)
             executable(registry.loaderPath().toString())
@@ -178,7 +194,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             inheritFD(sendPipe.source.fd, receivePipe.sink.fd)
         }
     } catch (e: Throwable) {
-        pluginHandshakeLogger.e { "process creation failed: id=$pluginId, message=${e.message}" }
+        logger.e { "process creation failed: id=$pluginId, message=${e.message}" }
         _state.value = Plugin.State.Closing
         pluginHandshakeRequest.cancel()
         pluginHandshakeResult.cancel()
@@ -198,20 +214,21 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                 )
             )
         )
-        pluginHandshakeLogger.e { "exit handshake unsuccessfully: id=$pluginId, state=${state.value}" }
+        logger.e { "exit handshake unsuccessfully: id=$pluginId, state=${state.value}" }
         return false
     }
 
     sendPipe.source.close()
     receivePipe.sink.close()
     _state.value = Plugin.State.Handshaking(verified.libpath, verified.manifest, verified.config)
-    pluginHandshakeLogger.d { "process started and state entered Handshaking: id=$pluginId" }
+    logger.d { "process started and state entered Handshaking: id=$pluginId" }
 
     // One process waiter is shared by handshake and close lifecycle; waitpid is never called twice.
     val processExit = registry.scope.async { process.await() }
     val runtime = PluginRuntime(process, processExit, sendPipeJob, receivePipeJob, sendPipe.sink, receivePipe.source)
 
     val loaderIsListening = withTimeoutOrNull(10.seconds) {
+        logger.v { "waiting loader listener: id=$pluginId" }
         raceN(
             { pluginHandshakeRequest.await(); true },
             { processExit.await(); false },
@@ -221,14 +238,17 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
         pluginHandshakeResult.cancel()
         val error = if (processExit.isCompleted) PluginHandshakeError.PROCESS_EXITED else PluginHandshakeError.TIMEOUT
         val message = if (processExit.isCompleted) "进程意外退出。" else "等待 loader 准备握手超时"
-        pluginHandshakeLogger.e { "loader did not become ready: id=$pluginId, error=$error, message=$message" }
+        logger.e { "loader did not become ready: id=$pluginId, error=$error, message=$message" }
         return closeHandshake(registry, runtime, PluginhandshakeFailedException(message, error))
     }
+    logger.i { "loader is listening for host handshake: id=$pluginId" }
 
     // Loader has explicitly confirmed its HostHandshakeRequest listener is active.
     EventBus.post(PluginOutboundEvent(pluginId, HostHandshakeRequest))
+    logger.d { "host handshake request posted: id=$pluginId" }
 
     val result = withTimeoutOrNull(10.seconds) {
+        logger.v { "waiting plugin handshake result: id=$pluginId" }
         raceN(
             { pluginHandshakeResult.await() },
             {
@@ -247,9 +267,9 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
 
     return when (result) {
         PluginHandshakeResult.Ready -> {
-            pluginHandshakeLogger.i { "handshake accepted: id=$pluginId" }
+            logger.i { "handshake accepted: id=$pluginId" }
             val ready = enterReady(registry, runtime)
-            pluginHandshakeLogger.i { "exit handshake successfully: id=$pluginId, ready=$ready, state=${state.value}" }
+            logger.i { "exit handshake successfully: id=$pluginId, ready=$ready, state=${state.value}" }
             ready
         }
 
@@ -257,6 +277,6 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             registry,
             runtime,
             PluginhandshakeFailedException(result.message, result.error),
-        ).also { pluginHandshakeLogger.e { "handshake rejected: id=$pluginId, message=${result.message}, error=${result.error}" } }
+        ).also { logger.e { "handshake rejected: id=$pluginId, message=${result.message}, error=${result.error}" } }
     }
 }

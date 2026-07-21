@@ -1,5 +1,6 @@
 package top.kagg886.milky.console.util.eventbus
 
+import co.touchlab.kermit.Logger
 import com.mayakapps.kache.InMemoryKache
 import com.mayakapps.kache.KacheKeys
 import com.mayakapps.kache.KacheStrategy
@@ -7,6 +8,8 @@ import com.mayakapps.kache.ObjectKache
 import com.mayakapps.kache.SizeCalculator
 import kotlinx.coroutines.Deferred
 import kotlin.time.Duration
+
+private val logger = Logger.withTag("LRUCache")
 
 /** A size-bounded, least-recently-used cache whose entries expire after being written. */
 interface LRUCache<K : Any, V : Any> {
@@ -59,7 +62,17 @@ interface LRUCache<K : Any, V : Any> {
         fun <K : Any> create(
             time: Duration,
             maxSize: Long = DEFAULT_MAX_SIZE,
-        ): LRUCache<K, ByteArray> = create(time, maxSize) { _, value -> value.size.toLong() }
+        ): LRUCache<K, ByteArray> {
+            logger.v { "enter create byte array cache: ttl=$time, maxSize=$maxSize" }
+            val cache = create(time, maxSize) { _, value ->
+                val size = value.size.toLong()
+                logger.d { "calculated byte array cache entry size: bytes=$size, expected=${size >= 0}" }
+                size
+            }
+            logger.i { "created byte array LRU cache: ttl=$time, maxSize=$maxSize" }
+            logger.v { "exit create byte array cache: maxSize=$maxSize" }
+            return cache
+        }
 
         /**
          * Creates a cache whose capacity is measured by [sizeCalculator].
@@ -72,12 +85,19 @@ interface LRUCache<K : Any, V : Any> {
             maxSize: Long = DEFAULT_MAX_SIZE,
             sizeCalculator: SizeCalculator<K, V>,
         ): LRUCache<K, V> {
+            logger.v { "enter create cache: ttl=$time, maxSize=$maxSize" }
             val cache = InMemoryKache(maxSize) {
+                logger.v { "configuring in-memory cache: maxSize=$maxSize" }
                 strategy = KacheStrategy.LRU
                 this.sizeCalculator = sizeCalculator
                 expireAfterWriteDuration = time
+                logger.d { "configured in-memory cache: strategy=${KacheStrategy.LRU}, ttl=$time, expected=true" }
             }
-            return object : LRUCache<K, V>, ObjectKache<K, V> by cache {}
+            logger.i { "created LRU cache: ttl=$time, maxSize=$maxSize" }
+            val result = object : LRUCache<K, V>, ObjectKache<K, V> by cache {}
+            logger.d { "wrapped object cache as LRUCache: expected=true" }
+            logger.v { "exit create cache: maxSize=$maxSize" }
+            return result
         }
     }
 

@@ -36,6 +36,7 @@ kotlin {
         commonMain.dependencies {
             implementation(libs.okio)
             implementation(libs.kotlinx.coroutines.core)
+            implementation(project(":utils:logger"))
             implementation(project(":utils:pipe"))
         }
 

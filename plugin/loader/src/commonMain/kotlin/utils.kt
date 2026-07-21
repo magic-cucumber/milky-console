@@ -1,6 +1,6 @@
 import co.touchlab.kermit.Logger
 
-private val pluginLoaderUtilsLogger = Logger.withTag("PluginLoaderUtils")
+private val logger = Logger.withTag("PluginLoaderUtils")
 
 
 /**
@@ -11,9 +11,19 @@ private val pluginLoaderUtilsLogger = Logger.withTag("PluginLoaderUtils")
  */
 
 fun List<Int>.isContinuous(): Boolean {
-    pluginLoaderUtilsLogger.i { "enter isContinuous: size=$size, values=$this" }
-    val result = size <= 1 || zipWithNext().all { (a, b) -> b == a + 1 }
-    pluginLoaderUtilsLogger.d { "evaluated continuity: result=$result, expected=${size <= 1 || result}" }
-    pluginLoaderUtilsLogger.i { "exit isContinuous successfully: result=$result" }
+    logger.i { "enter isContinuous: size=$size, values=$this" }
+    val result = if (size <= 1) {
+        logger.v { "isContinuous entered trivial branch: size=$size" }
+        true
+    } else {
+        logger.v { "isContinuous entered pair comparison branch: size=$size" }
+        zipWithNext().all { (a, b) ->
+            val continuous = b == a + 1
+            logger.v { "isContinuous compared pair: left=$a, right=$b, continuous=$continuous" }
+            continuous
+        }
+    }
+    logger.d { "evaluated continuity: result=$result, expected=${size <= 1 || result}" }
+    logger.i { "exit isContinuous successfully: result=$result" }
     return result
 }
