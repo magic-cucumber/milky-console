@@ -53,7 +53,7 @@ private class LinuxFileWatcher(file: Path, private val duration: Duration) : Clo
         val byteCount = read(fd, buffer, 4096u)
         if (byteCount <= 0) return@memScoped emptyList()
 
-        buildList {
+        val changes = buildList {
             var offset = 0
             while (offset < byteCount.toInt()) {
                 val event = (buffer + offset)!!.reinterpret<inotify_event>().pointed
@@ -64,6 +64,9 @@ private class LinuxFileWatcher(file: Path, private val duration: Duration) : Clo
                 offset += sizeOf<inotify_event>().toInt() + event.len.toInt()
             }
         }
+        // unlink can enqueue IN_ATTRIB before IN_DELETE_SELF. Deletion is terminal
+        // on every supported platform, so do not expose that incidental modification.
+        if (FileChange.DELETED in changes) listOf(FileChange.DELETED) else changes
     }
 
     override fun close() {

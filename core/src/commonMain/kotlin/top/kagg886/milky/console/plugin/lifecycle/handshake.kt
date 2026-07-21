@@ -9,7 +9,6 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.filter
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.newSingleThreadContext
@@ -64,6 +63,11 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
     val verified = state.value as Plugin.State.Verified
     val sendPipe = IPCAnonymousPipe.create()
     val receivePipe = IPCAnonymousPipe.create()
+    // EventBus intentionally does not replay events.  Keep terminal handshake
+    // state locally as well, so a pipe reader cannot publish a request/result
+    // before a separately scheduled EventBus collector has registered.
+    val pluginHandshakeRequest = CompletableDeferred<Unit>()
+    val pluginHandshakeResult = CompletableDeferred<PluginHandshakeResult>()
 
     // This subscription must exist before the loader can send PluginHandshakeRequest.
     val sendPipeDispatcher = newSingleThreadContext("plugin-$pluginId-pipe-writer")
@@ -91,12 +95,9 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                 // A loader that closes its output before emitting a terminal packet
                 // cannot complete the handshake.  Publish through the normal
                 // terminal-result channel so every handshake failure has one path.
-                EventBus.postBlocking(
-                    PluginInboundEvent(
-                        pluginId,
-                        PluginHandshakeResult.Rejected("进程意外退出。", PluginHandshakeError.PROCESS_EXITED),
-                    ),
-                )
+                val result = PluginHandshakeResult.Rejected("进程意外退出。", PluginHandshakeError.PROCESS_EXITED)
+                pluginHandshakeResult.complete(result)
+                EventBus.postBlocking(PluginInboundEvent(pluginId, result))
                 break
             }
             val merged = if (!packet.isSplit) {
@@ -135,23 +136,18 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
             }
             EventBus.postBlocking(PluginInboundEvent(pluginId, event))
 
+            when (event) {
+                is PluginHandshakeRequest -> pluginHandshakeRequest.complete(Unit)
+                is PluginHandshakeResult -> pluginHandshakeResult.complete(event)
+                else -> Unit
+            }
+
             if (event !is PluginLog) {
                 pluginHandshakeLogger.d { "processed inbound event: id=$pluginId, sourceTag=${if (event is PluginLog) event.tag else pluginId}, type=${event::class.simpleName}" }
             }
         }
     }
     receivePipeJob.invokeOnCompletion { receivePipeDispatcher.close() }
-
-    // UNDISTPATCHED guarantees EventBus has registered both channels before Process.create.
-    val pluginHandshakeRequest = registry.scope.async(start = CoroutineStart.UNDISPATCHED) {
-        EventBus.subscribe<PluginInboundEvent>()
-            .first { it.pluginId == pluginId && it.event is PluginHandshakeRequest }
-    }
-    val pluginHandshakeResult = registry.scope.async(start = CoroutineStart.UNDISPATCHED) {
-        EventBus.subscribe<PluginInboundEvent>()
-            .first { it.pluginId == pluginId && it.event is PluginHandshakeResult }
-            .event as PluginHandshakeResult
-    }
 
     //copy libpath to other than we can hotfix when we replace plugin
     val tmp = with(verified.libpath.name) {
