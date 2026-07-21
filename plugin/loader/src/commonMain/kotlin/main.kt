@@ -54,6 +54,7 @@ logPipe.sink.fd.toString(),
 tmp.toString(),
 Json.encodeToString(verified.config),
 registry.pluginDataPath(this@handshake).toString(),
+Logger.mutableConfig.minSeverity.name,
 ```
  */
 @OptIn(
@@ -65,13 +66,14 @@ registry.pluginDataPath(this@handshake).toString(),
     ExperimentalNativeApi::class,
 )
 fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
+    Logger.setMinSeverity(Severity.valueOf(args[6]))
     logger.i { "enter main: argCount=${args.size}" }
     setUnhandledExceptionHook { throwable ->
         logger.a { "loader crashed before IPC crash reporter was ready: ${throwable.stackTraceToString()}" }
         exit(1)
     }
-    if (args.size < 6) {
-        logger.e { "exit main unsuccessfully: invalid arguments, expected at least 6 but got ${args.size}" }
+    if (args.size < 7) {
+        logger.e { "exit main unsuccessfully: invalid arguments, expected at least 7 but got ${args.size}" }
         exit(1)
     }
     logger.v { "argument validation passed; initializing IPC endpoints" }

@@ -221,6 +221,7 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
                 tmp.toString(),
                 Json.encodeToString(verified.config),
                 registry.pluginDataPath(this@handshake).toString(),
+                Logger.mutableConfig.minSeverity.name,
             )
             inheritFD(sendPipe.source.fd, receivePipe.sink.fd, logPipe.sink.fd)
         }

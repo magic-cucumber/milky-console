@@ -1,4 +1,5 @@
 import co.touchlab.kermit.Logger
+import co.touchlab.kermit.Severity
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
@@ -18,6 +19,7 @@ private val logger = Logger.withTag("Core Application")
 
 fun main(args: Array<String>) {
     Logger.setLogWriters(listOf(MilkyConsoleDefaultLogWriter))
+    Logger.setMinSeverity(Severity.Info)
     try {
         runBlocking(Dispatchers.IO) {
             logger.i { "enter main: argCount=${args.size}, base=$base" }

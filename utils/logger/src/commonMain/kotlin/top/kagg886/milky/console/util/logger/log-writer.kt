@@ -1,6 +1,7 @@
 package top.kagg886.milky.console.util.logger
 
 import co.touchlab.kermit.LogWriter
+import co.touchlab.kermit.Logger
 import co.touchlab.kermit.Severity
 import co.touchlab.kermit.Severity.Assert
 import co.touchlab.kermit.Severity.Debug
