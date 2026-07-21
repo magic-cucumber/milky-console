@@ -51,6 +51,7 @@ kotlin {
             implementation(libs.ktoml.core)
 
             implementation(project(":plugin:protocol"))
+            implementation(project(":core-utils"))
 
             implementation(project(":utils:event-bus"))
             implementation(project(":utils:logger"))

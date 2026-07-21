@@ -247,7 +247,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     hostApi.pointed.abi_version = MILKY_CONSOLE_HOST_ABI_VERSION
     hostApi.pointed.struct_size = sizeOf<milky_console_host_api>().toUInt()
-    hostApi.pointed.send_message = staticCFunction { type, message ->
+    hostApi.pointed.send_message = staticCFunction { uin, type, message ->
         val type = type?.toKString() ?: return@staticCFunction cValue {
             pluginLoaderLogger.w { "send_message received null type; returning INVALID_ARGUMENT" }
             uuid[0] = 0
@@ -260,7 +260,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
         }
 
         val event = try {
-            text.toPluginApiRequest(type)!!
+            text.toPluginApiRequest(type)!!.copy(uin = uin)
         } catch (_: Throwable) {
             pluginLoaderLogger.w { "send_message payload could not be decoded; returning INVALID_ARGUMENT" }
             return@staticCFunction cValue {

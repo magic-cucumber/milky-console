@@ -16,6 +16,7 @@ data class HostEvent(val event: Event) : MilkyConsoleFromEvent.FromHost
 @Serializable
 data class PluginApiRequest(
     val category: String,
+    val uin: ULong = 0u,
     val tag: Uuid = Uuid.random(),
     @Serializable(with = MilkyElementSerializer::class)
     val payload: JsonElement,

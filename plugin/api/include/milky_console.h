@@ -2,6 +2,7 @@
 #define MILKY_CONSOLE_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 /*
  * Symbol visibility
@@ -92,6 +93,7 @@ typedef struct milky_console_host_api {
 
 
     milky_message_send_result_t (MILKY_CONSOLE_CALL *send_message)(
+        uint64_t uin,
         const char *type,
         const char *message
     );

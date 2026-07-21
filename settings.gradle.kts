@@ -29,12 +29,15 @@ dependencyResolutionManagement {
     }
 }
 include(":core")
+include(":core-utils")
 
 include(":plugin:loader")
 include(":plugin:protocol")
 include(":plugin:api")
-include(":plugin:processor")
 include(":plugin:sample")
+
+include(":processor:protocol")
+include(":processor:core")
 
 include(":utils:pipe")
 include(":utils:dlloader")

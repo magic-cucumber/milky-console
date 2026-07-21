@@ -6,15 +6,13 @@ import okio.FileSystem
 import okio.Path.Companion.toPath
 import top.kagg886.milky.console.Application
 import top.kagg886.milky.console.plugin.Plugin
-import top.kagg886.milky.console.plugin.config.HostConfig
 import top.kagg886.milky.console.plugin.lifecycle.PluginOutboundEvent
 import top.kagg886.milky.console.plugin.manifest
 import top.kagg886.milky.console.protocol.HostClose
-import top.kagg886.milky.console.protocol.HostEvent
 import top.kagg886.milky.console.util.eventbus.EventBus
 import top.kagg886.milky.console.util.logger.MilkyConsoleDefaultLogWriter
 
-private val base = FileSystem.SYSTEM.canonicalize("milky-console".toPath())
+private val base = FileSystem.SYSTEM.canonicalize(".".toPath()) / "milky-console"
 
 private val logger = Logger.withTag("Core Application")
 
@@ -22,14 +20,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     Logger.setLogWriters(listOf(MilkyConsoleDefaultLogWriter))
     Application.init(base)
 
-    val hostConfig = HostConfig.load(FileSystem.SYSTEM, base / "config.toml")
-    check(hostConfig.connections.isNotEmpty()) { "config.toml must define at least one connection" }
-
-    val bots = hostConfig.connections.map { connection ->
-        connection.createApplication()
-    }
-
-    val failures = bots.map { bot ->
+    val failures = Application.bots.map { bot ->
         async {
             val exception = async(start = CoroutineStart.UNDISPATCHED) {
                 bot.exceptionFlow.first().second
@@ -49,7 +40,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
 
     failures.forEach { exception -> logger.w(exception) { "milky exception" } }
 
-    bots.forEach { bot ->
+    Application.bots.forEach { bot ->
         bot.disconnectEvent()
         bot.close()
     }

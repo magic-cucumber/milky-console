@@ -77,10 +77,10 @@ private fun onMessage(message: CPointer<ByteVar>?) {
         command.startsWith("/echo ") -> command.removePrefix("/echo ")
         else -> return
     }
-    sendReply(event.data, reply)
+    sendReply(event.selfId.toULong(),event.data, reply)
 }
 
-private fun sendReply(message: IncomingMessage, text: String) {
+private fun sendReply(bot: ULong, message: IncomingMessage, text: String) {
     val segment = OutgoingSegment.Text(OutgoingSegment.Text.Data(text))
     val (endpoint, payload) = when (message) {
         is IncomingMessage.Friend -> "/send_private_message" to milkyJsonModule.encodeToString(
@@ -96,6 +96,7 @@ private fun sendReply(message: IncomingMessage, text: String) {
 
     memScoped {
         hostApi?.pointed?.send_message?.invoke(
+            bot,
             endpoint.cstr.getPointer(this),
             payload.cstr.getPointer(this),
         )

@@ -1,4 +1,4 @@
-package top.kagg886.milky.console.processor
+package top.kagg886.milky.console.processor.protocol
 
 import com.google.devtools.ksp.processing.CodeGenerator
 import com.google.devtools.ksp.processing.Dependencies
@@ -26,9 +26,7 @@ class PluginApiRequestProcessor(
             ?: return emptyList()
         if (!apiEndpoint.validate()) return listOf(apiEndpoint)
 
-        val endpoints = apiEndpoint.getSealedSubclasses()
-            .filterIsInstance<KSClassDeclaration>()
-            .toList()
+        val endpoints = apiEndpoint.getSealedSubclasses().filterIsInstance<KSClassDeclaration>().toList()
         if (endpoints.any { !it.validate() }) return endpoints.filterNot { it.validate() }
 
         codeGenerator.createNewFile(
@@ -44,34 +42,22 @@ class PluginApiRequestProcessor(
             writer.appendLine("import org.ntqqrev.milky.ApiEndpoint")
             writer.appendLine("import org.ntqqrev.milky.milkyJsonModule")
             writer.appendLine()
-            writer.appendLine("/**")
-            writer.appendLine(" * Validates this JSON request body against the input type for [type] and creates a plugin API request.")
-            writer.appendLine(" * Returns null when the JSON is invalid, [type] is not an API endpoint path, or the body cannot be decoded.")
-            writer.appendLine(" */")
+            writer.appendLine("/** Decodes this request payload using Milky's JSON configuration. */")
+            writer.appendLine("public inline fun <reified T> kotlinx.serialization.json.JsonElement.toPayload(): T =")
+            writer.appendLine("    milkyJsonModule.decodeFromJsonElement(this)")
+            writer.appendLine()
             writer.appendLine("public fun String.toPluginApiRequest(type: String, tag: Uuid = Uuid.random()): PluginApiRequest? = runCatching {")
             writer.appendLine("    val rawPayload = milkyJsonModule.parseToJsonElement(this)")
             writer.appendLine("    when (type) {")
-
             endpoints.forEach { endpoint ->
                 val endpointName = endpoint.qualifiedName?.asString()
                     ?: error("ApiEndpoint subclass without a qualified name: ${endpoint.simpleName.asString()}")
-                val inputType = endpoint.superTypes
-                    .map { it.resolve() }
-                    .firstOrNull { it.declaration.qualifiedName?.asString() == API_ENDPOINT }
-                    ?.arguments
-                    ?.firstOrNull()
-                    ?.type
-                    ?.resolve()
-                    ?.declaration
-                    ?.qualifiedName
-                    ?.asString()
-                    ?: error("Unable to resolve request type for $endpointName")
+                val inputType = endpoint.apiType(0)
                 writer.appendLine("        $endpointName.path -> {")
                 writer.appendLine("            val request = milkyJsonModule.decodeFromJsonElement<$inputType>(rawPayload)")
                 writer.appendLine("            PluginApiRequest(category = type, tag = tag, payload = milkyJsonModule.encodeToJsonElement(request))")
                 writer.appendLine("        }")
             }
-
             writer.appendLine("        else -> return null")
             writer.appendLine("    }")
             writer.appendLine("}.getOrNull()")
@@ -80,6 +66,18 @@ class PluginApiRequestProcessor(
         return emptyList()
     }
 }
+
+private fun KSClassDeclaration.apiType(index: Int): String = superTypes
+    .map { it.resolve() }
+    .firstOrNull { it.declaration.qualifiedName?.asString() == API_ENDPOINT }
+    ?.arguments
+    ?.getOrNull(index)
+    ?.type
+    ?.resolve()
+    ?.declaration
+    ?.qualifiedName
+    ?.asString()
+    ?: error("Unable to resolve API type $index for ${qualifiedName?.asString()}")
 
 class PluginApiRequestProcessorProvider : SymbolProcessorProvider {
     override fun create(environment: SymbolProcessorEnvironment): SymbolProcessor =

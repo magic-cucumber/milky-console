@@ -11,6 +11,7 @@ import okio.FileSystem
 import okio.Path
 import top.kagg886.milky.console.plugin.Plugin
 import top.kagg886.milky.console.plugin.PluginRegistry
+import top.kagg886.milky.console.plugin.config.HostConfig
 import top.kagg886.milky.console.plugin.libpath
 import top.kagg886.milky.console.plugin.lifecycle.PluginOutboundEvent
 import top.kagg886.milky.console.plugin.manifest
@@ -19,6 +20,7 @@ import top.kagg886.milky.console.util.eventbus.EventBus
 import top.kagg886.milky.console.util.raceN
 import top.kagg886.milky.console.util.watcher.FileChange
 import top.kagg886.milky.console.util.watcher.watchFileChange
+import org.ntqqrev.saltify.core.SaltifyApplication
 
 private val applicationLogger = Logger.withTag("Application")
 
@@ -27,16 +29,32 @@ object Application {
     private val lifecycleLock = Mutex()
     private val pluginWatchJobsLock = Mutex()
     private lateinit var registry: PluginRegistry
+    private lateinit var configuredBots: List<SaltifyApplication>
     private val pluginWatchJobs = mutableMapOf<Plugin, Job>()
 
     val plugins: Set<Plugin>
         get() = registry.plugins
 
+    val bots: List<SaltifyApplication>
+        get() {
+            check(::configuredBots.isInitialized) { "Application has not been initialized" }
+            return configuredBots
+        }
+
     suspend fun init(base: Path) {
         lifecycleLock.withLock {
             check(!::registry.isInitialized) { "Application has already been initialized" }
 
-            fileSystem.createDirectories(base)
+            if (fileSystem.metadataOrNull(base) == null) {
+                fileSystem.createDirectories(base)
+                HostConfig.writeDefault(fileSystem, base / "config.toml")
+            }
+            check(fileSystem.metadataOrNull(base)?.isDirectory == true) { "Application base path must be a directory: $base" }
+
+            val hostConfig = HostConfig.load(fileSystem, base / "config.toml")
+            check(hostConfig.connections.isNotEmpty()) { "config.toml must define at least one connection" }
+            configuredBots = hostConfig.connections.map { it.createApplication() }
+
             fileSystem.createDirectories(base / "plugin")
             registry = PluginRegistry(base)
             scanLocked()
