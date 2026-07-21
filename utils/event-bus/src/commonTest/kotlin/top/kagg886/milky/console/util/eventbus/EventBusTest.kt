@@ -1,16 +1,21 @@
 package top.kagg886.milky.console.util.eventbus
 
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.yield
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 
@@ -109,11 +114,47 @@ class EventBusTest {
         }
     }
 
+    @Test
+    fun tryPostFailsWhenASubscriberChannelIsCongested() = runBlocking {
+        val blockedSubscribed = CompletableDeferred<Unit>()
+        val healthySubscribed = CompletableDeferred<Unit>()
+        val healthyEvents = mutableListOf<Int>()
+
+        val blockedSubscriber = async(start = CoroutineStart.UNDISPATCHED) {
+            EventBus.subscribe<BackpressureEvent> { blockedSubscribed.complete(Unit) }
+                .collect { awaitCancellation() }
+        }
+        val healthySubscriber = async(start = CoroutineStart.UNDISPATCHED) {
+            EventBus.subscribe<BackpressureEvent> { healthySubscribed.complete(Unit) }
+                .collect { healthyEvents += it.value }
+        }
+
+        try {
+            blockedSubscribed.await()
+            healthySubscribed.await()
+            assertTrue(EventBus.tryPost(BackpressureEvent(0)))
+            yield() // The blocked collector consumes one event, then stops receiving.
+
+            repeat(64) { value ->
+                assertTrue(EventBus.tryPost(BackpressureEvent(value + 1)))
+                yield() // Keep the healthy channel drained while the other fills.
+            }
+
+            assertFalse(EventBus.tryPost(BackpressureEvent(65)))
+            yield()
+            assertEquals((0..64).toList(), healthyEvents)
+        } finally {
+            blockedSubscriber.cancelAndJoin()
+            healthySubscriber.cancelAndJoin()
+        }
+    }
+
     private data class SingleConsumerEvent(val value: Int)
     private data class FirstEvent(val value: String)
     private data class SecondEvent(val value: String)
     private data class UndeliveredEvent(val value: String)
     private data object LifecycleEvent
+    private data class BackpressureEvent(val value: Int)
     private open class ParentEvent(val value: String)
     private class ChildEvent(value: String) : ParentEvent(value)
 }

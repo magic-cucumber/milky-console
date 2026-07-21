@@ -57,6 +57,7 @@ typedef int milky_result_t;
 #define MILKY_RESULT_TIMEOUT           ((milky_result_t)-4)
 #define MILKY_RESULT_NOT_FOUND         ((milky_result_t)-5)
 #define MILKY_RESULT_BUFFER_TOO_SHORT ((milky_result_t)-6)
+#define MILKY_RESULT_BUFFER_OVERFLOW ((milky_result_t)-7)
 
 typedef struct milky_message_send_result {
     milky_result_t result;
@@ -93,16 +94,16 @@ typedef struct milky_console_host_api {
 
 
     milky_message_send_result_t (MILKY_CONSOLE_CALL *send_message)(
-        uint64_t uin,
-        const char *type,
-        const char *message
+            uint64_t uin,
+            const char *type,
+            const char *message
     );
 
     milky_message_wait_result_t (MILKY_CONSOLE_CALL *wait_message_result)(
-        const char *id,
-        int timeout,
-        char *buffer,
-        size_t buffer_size
+            const char *id,
+            int timeout,
+            char *buffer,
+            size_t buffer_size
     );
 } milky_console_host_api_t;
 
@@ -133,8 +134,8 @@ typedef struct milky_console_plugin_api {
      * Returns MILKY_TRUE on success and MILKY_FALSE on failure.
      */
     milky_bool_t (MILKY_CONSOLE_CALL *on_load)(
-        const char *config_json,
-        const milky_console_host_api_t *host_api
+            const char *config_json,
+            const milky_console_host_api_t *host_api
     );
 
     /*

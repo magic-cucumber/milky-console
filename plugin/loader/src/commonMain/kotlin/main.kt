@@ -289,8 +289,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
     logger.v { "allocated host API struct: bytes=${sizeOf<milky_console_host_api>()}" }
     PendingPluginApiRequests.initialize { request ->
         logger.v { "forwarding plugin API request to host: tag=${request.tag}" }
-        writeEvent(request)
-        true
+        EventBus.postBlocking(request)
     }
 
     hostApi.pointed.abi_version = MILKY_CONSOLE_HOST_ABI_VERSION
@@ -322,7 +321,7 @@ fun main(args: Array<String>): Unit = runBlocking(Dispatchers.IO) {
             logger.e { "send_message request registration failed: tag=${event.tag}" }
             return@staticCFunction cValue {
                 uuid[0] = 0
-                result = MILKY_RESULT_INTERNAL_ERROR
+                result = MILKY_RESULT_BUFFER_OVERFLOW
             }
         }
         logger.d { "send_message registered request: tag=${event.tag}, expected=true" }
