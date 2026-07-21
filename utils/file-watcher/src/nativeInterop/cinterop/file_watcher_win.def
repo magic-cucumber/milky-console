@@ -1,0 +1,2 @@
+headers = file_watcher_win.h
+package = top.kagg886.milky.console.util.watcher.wininterop
