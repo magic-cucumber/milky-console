@@ -17,3 +17,18 @@ class PluginhandshakeFailedException(
     val error: PluginHandshakeError? = null,
     override val cause: Throwable? = null,
 ) : PluginException(message, cause)
+
+class PluginReportedCloseException(
+    val pluginMessage: String,
+    val pluginStacktrace: String?,
+) : PluginException(
+    buildString {
+        append("plugin closed unexpectedly: ")
+        append(pluginMessage)
+        if (!pluginStacktrace.isNullOrBlank()) append("\n").append(pluginStacktrace)
+    },
+)
+
+class PluginProcessExitException(
+    val exitStatus: top.kagg886.milky.console.util.process.Process.ExitStatus,
+) : PluginException("plugin process exited: $exitStatus")

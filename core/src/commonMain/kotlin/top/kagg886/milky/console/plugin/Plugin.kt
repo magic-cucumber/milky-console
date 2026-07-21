@@ -28,10 +28,6 @@ class Plugin(val basePath: Path) {
         basePath / "platform"
     }
 
-    init {
-        
-    }
-
 
     sealed interface State {
         //刚刚实例化插件时的状态
@@ -68,7 +64,11 @@ class Plugin(val basePath: Path) {
         data object Closing : State
 
         //插件由于正常关闭/管道损坏/以及其他未知原因而关闭
-        data class Closed(val exception: Throwable? = null) : State
+        data class Closed(val reason: PluginCloseReason) : State {
+            /** Compatibility view for callers that only need an error object. */
+            val exception: Throwable?
+                get() = reason.exception
+        }
         interface ManifestInitialized {
             val manifest: PluginManifest
             val libpath: Path

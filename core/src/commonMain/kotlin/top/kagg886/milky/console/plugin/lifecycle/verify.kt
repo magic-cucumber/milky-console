@@ -8,6 +8,7 @@ import okio.FileSystem
 import okio.Path.Companion.toPath
 import top.kagg886.milky.console.CoreBuildConfig
 import top.kagg886.milky.console.plugin.Plugin
+import top.kagg886.milky.console.plugin.PluginCloseReason
 import top.kagg886.milky.console.plugin.PluginException
 import top.kagg886.milky.console.plugin.PluginRegistry
 import top.kagg886.milky.console.plugin.config.PluginManifest
@@ -23,7 +24,7 @@ fun Plugin.verify(registry: PluginRegistry): Boolean {
 
     if (!fs.exists(manifestPath)) {
         pluginVerifyLogger.e { "manifest validation failed: missing $manifestPath" }
-        _state.value = Plugin.State.Closed(PluginException("缺少 manifest.json"))
+        _state.value = Plugin.State.Closed(PluginCloseReason.VerificationFailed(PluginException("缺少 manifest.json")))
 
         return false
     }
@@ -38,7 +39,7 @@ fun Plugin.verify(registry: PluginRegistry): Boolean {
             idVal
         } catch (_: Exception) {
             pluginVerifyLogger.e { "manifest validation failed: unable to read plugin id from $manifestPath" }
-            _state.value = Plugin.State.Closed(PluginException("无法获取 $manifestPath 代表的插件id。"))
+            _state.value = Plugin.State.Closed(PluginCloseReason.VerificationFailed(PluginException("无法获取 $manifestPath 代表的插件id。")))
             return false
         }
 
@@ -52,7 +53,7 @@ fun Plugin.verify(registry: PluginRegistry): Boolean {
         if (manifestVersion == null) {
             pluginVerifyLogger.e { "manifest validation failed: missing manifest_version, id=$id" }
             _state.value =
-                Plugin.State.Closed(PluginException("插件:$id 无法获取 manifest.json metadata.manifest_version"))
+                Plugin.State.Closed(PluginCloseReason.VerificationFailed(PluginException("插件:$id 无法获取 manifest.json metadata.manifest_version")))
             return false
         }
 
@@ -61,7 +62,7 @@ fun Plugin.verify(registry: PluginRegistry): Boolean {
         if (manifestVersion !in manifestSupportRange) {
             pluginVerifyLogger.e { "manifest validation failed: unsupported manifest_version=$manifestVersion, supported=$manifestSupportRange, id=$id" }
             _state.value =
-                Plugin.State.Closed(PluginException("此版本的milky-console只支持 schema-version 为 [$manifestSupportRange] 的 版本。当前插件:$id 的版本为 $manifestVersion"))
+                Plugin.State.Closed(PluginCloseReason.VerificationFailed(PluginException("此版本的milky-console只支持 schema-version 为 [$manifestSupportRange] 的 版本。当前插件:$id 的版本为 $manifestVersion")))
             return false
         }
 
@@ -75,7 +76,7 @@ fun Plugin.verify(registry: PluginRegistry): Boolean {
         if (protocolVersion == null) {
             pluginVerifyLogger.e { "manifest validation failed: missing protocol_version, id=$id" }
             _state.value =
-                Plugin.State.Closed(PluginException("插件:$id 无法获取 manifest.json metadata.protocol_version"))
+                Plugin.State.Closed(PluginCloseReason.VerificationFailed(PluginException("插件:$id 无法获取 manifest.json metadata.protocol_version")))
             return false
         }
 
@@ -84,7 +85,7 @@ fun Plugin.verify(registry: PluginRegistry): Boolean {
         if (protocolVersion !in protocolSupportRange) {
             pluginVerifyLogger.e { "manifest validation failed: unsupported protocol_version=$protocolVersion, supported=$protocolSupportRange, id=$id" }
             _state.value =
-                Plugin.State.Closed(PluginException("此版本的milky-console只支持 schema-version 为 [${protocolSupportRange}] 的 版本。当前插件:$id 的版本为 $manifestVersion"))
+                Plugin.State.Closed(PluginCloseReason.VerificationFailed(PluginException("此版本的milky-console只支持 schema-version 为 [${protocolSupportRange}] 的 版本。当前插件:$id 的版本为 $manifestVersion")))
             return false
         }
 
@@ -93,7 +94,7 @@ fun Plugin.verify(registry: PluginRegistry): Boolean {
             Json.decodeFromJsonElement<PluginManifest>(json)
         } catch (ex: Exception) {
             pluginVerifyLogger.e(ex) { "manifest validation failed: deserialization error, id=$id" }
-            _state.value = Plugin.State.Closed(PluginException("无法序列化插件:$id", ex))
+            _state.value = Plugin.State.Closed(PluginCloseReason.VerificationFailed(PluginException("无法序列化插件:$id", ex)))
             return false
         }
     }
@@ -101,7 +102,7 @@ fun Plugin.verify(registry: PluginRegistry): Boolean {
     //校验动态库是否存在
     if (fs.metadataOrNull(platformPath)?.isDirectory == false) {
         pluginVerifyLogger.e { "platform validation failed: missing platform directory, id=${manifest.id}" }
-        _state.value = Plugin.State.Closed(PluginException("插件: ${manifest.id} 缺少动态库文件夹"))
+        _state.value = Plugin.State.Closed(PluginCloseReason.VerificationFailed(PluginException("插件: ${manifest.id} 缺少动态库文件夹")))
         return false
     }
 
@@ -130,7 +131,7 @@ fun Plugin.verify(registry: PluginRegistry): Boolean {
 
             else -> {
                 pluginVerifyLogger.e { "platform validation failed: unsupported OS=${Platform.osFamily}, id=${manifest.id}" }
-                _state.value = Plugin.State.Closed(PluginException("插件: ${manifest.id} 不支持本平台"))
+                _state.value = Plugin.State.Closed(PluginCloseReason.VerificationFailed(PluginException("插件: ${manifest.id} 不支持本平台")))
                 null
             }
         }
@@ -140,7 +141,7 @@ fun Plugin.verify(registry: PluginRegistry): Boolean {
 
     if (dllibFile == null) {
         pluginVerifyLogger.e { "platform validation failed: expected library not found, id=${manifest.id}, os=$osFamily, arch=$cpuArch" }
-        _state.value = Plugin.State.Closed(PluginException("插件: ${manifest.id} 不支持本平台"))
+        _state.value = Plugin.State.Closed(PluginCloseReason.VerificationFailed(PluginException("插件: ${manifest.id} 不支持本平台")))
         return false
     }
 

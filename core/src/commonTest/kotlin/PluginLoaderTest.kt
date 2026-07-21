@@ -23,6 +23,7 @@ import top.kagg886.milky.console.plugin.lifecycle.PluginOutboundEvent
 import top.kagg886.milky.console.protocol.*
 import top.kagg886.milky.console.util.eventbus.EventBus
 import top.kagg886.milky.console.util.logger.MilkyConsoleDefaultLogWriter
+import top.kagg886.milky.console.util.process.Process
 import kotlin.test.*
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -124,9 +125,10 @@ class PluginLoaderTest {
         assertIs<Plugin.State.Ready>(ready)
 
         assertTrue(ready.process.kill())
-        withTimeout(10.seconds) {
+        val closed = withTimeout(10.seconds) {
             plugin.state.filterIsInstance<Plugin.State.Closed>().first()
         }
+        assertEquals(PluginCloseReason.ProcessExited(Process.ExitStatus.Killed), closed.reason)
         Unit
     }
 
@@ -143,6 +145,9 @@ class PluginLoaderTest {
         val closed = withTimeout(10.seconds) {
             plugin.state.filterIsInstance<Plugin.State.Closed>().first()
         }
+        val reason = assertIs<PluginCloseReason.HostRequested>(closed.reason)
+        assertEquals("test shutdown", reason.reason)
+        assertEquals(Process.ExitStatus.Result(0), reason.exitStatus)
         assertNull(closed.exception)
         assertFalse(registry.plugins.contains(plugin))
     }
@@ -263,7 +268,8 @@ class PluginLoaderTest {
         val closed = withTimeout(10.seconds) {
             plugin.state.filterIsInstance<Plugin.State.Closed>().first()
         }
-        val exception = assertIs<PluginhandshakeFailedException>(assertNotNull(closed.exception))
+        val reason = assertIs<PluginCloseReason.HandshakeFailed>(closed.reason)
+        val exception = assertIs<PluginhandshakeFailedException>(assertNotNull(reason.exception))
         assertEquals(expectedError, exception.error)
         assertTrue(
             exception.message.contains(expectedMessage),

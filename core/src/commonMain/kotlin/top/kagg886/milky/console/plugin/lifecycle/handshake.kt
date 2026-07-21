@@ -19,6 +19,7 @@ import kotlinx.serialization.json.Json
 import top.kagg886.milky.console.plugin.Plugin
 import top.kagg886.milky.console.plugin.PluginhandshakeFailedException
 import top.kagg886.milky.console.plugin.PluginRegistry
+import top.kagg886.milky.console.plugin.PluginCloseReason
 import top.kagg886.milky.console.plugin.manifest
 import top.kagg886.milky.console.protocol.HostHandshakeRequest
 import top.kagg886.milky.console.protocol.MilkyConsoleFromEvent
@@ -178,11 +179,11 @@ suspend fun Plugin.handshake(registry: PluginRegistry): Boolean {
         receivePipe.source.close()
         registry.remove(this)
         _state.value = Plugin.State.Closed(
-            PluginhandshakeFailedException(
+            PluginCloseReason.HandshakeFailed(PluginhandshakeFailedException(
                 "无法启动插件进程: ${e.message}",
                 PluginHandshakeError.PROCESS_START_FAILED,
                 e,
-            )
+            ))
         )
         pluginHandshakeLogger.e { "exit handshake unsuccessfully: id=$pluginId, state=${state.value}" }
         return false

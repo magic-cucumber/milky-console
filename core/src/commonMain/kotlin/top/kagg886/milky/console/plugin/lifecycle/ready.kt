@@ -4,9 +4,9 @@ import co.touchlab.kermit.Logger
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
-import okio.IOException
 import kotlinx.coroutines.launch
 import top.kagg886.milky.console.plugin.Plugin
+import top.kagg886.milky.console.plugin.PluginCloseReason
 import top.kagg886.milky.console.plugin.PluginRegistry
 import top.kagg886.milky.console.protocol.HostClose
 import top.kagg886.milky.console.protocol.PluginClosed
@@ -17,10 +17,9 @@ private val pluginLifecycleLogger = Logger.withTag("PluginLifecycle")
 
 private sealed interface CloseSignal {
     data class Plugin(val event: PluginClosed) : CloseSignal
-    data object Host : CloseSignal
+    data class Host(val event: HostClose) : CloseSignal
     data class Process(val status: top.kagg886.milky.console.util.process.Process.ExitStatus) : CloseSignal
 }
-
 internal fun Plugin.enterReady(registry: PluginRegistry, runtime: PluginRuntime): Boolean {
     pluginLifecycleLogger.i { "enter enterReady: state=${state.value}" }
     val handshaking = state.value as Plugin.State.Handshaking
@@ -35,13 +34,14 @@ internal fun Plugin.enterReady(registry: PluginRegistry, runtime: PluginRuntime)
     val hostClose = registry.scope.async(start = CoroutineStart.UNDISPATCHED) {
         EventBus.subscribe<PluginOutboundEvent>()
             .first { it.pluginId == pluginId && it.event is HostClose }
+            .event as HostClose
     }
 
     val closeAwaitJob = registry.scope.launch(start = CoroutineStart.LAZY) {
         val signal = try {
             raceN(
                 { CloseSignal.Plugin(pluginClosed.await()) },
-                { hostClose.await(); CloseSignal.Host },
+                { CloseSignal.Host(hostClose.await()) },
                 { CloseSignal.Process(runtime.processExit.await()) },
             )
         } finally {
@@ -54,7 +54,7 @@ internal fun Plugin.enterReady(registry: PluginRegistry, runtime: PluginRuntime)
         _state.value = Plugin.State.Closing
         val status = when (signal) {
             is CloseSignal.Process -> signal.status
-            is CloseSignal.Plugin, CloseSignal.Host -> runtime.processExit.await()
+            is CloseSignal.Plugin, is CloseSignal.Host -> runtime.processExit.await()
         }
         runtime.sendPipeJob.cancel()
         runtime.receivePipeJob.cancel()
@@ -62,8 +62,13 @@ internal fun Plugin.enterReady(registry: PluginRegistry, runtime: PluginRuntime)
         runCatching { runtime.receive.close() }
         registry.remove(this@enterReady)
         _state.value = when (signal) {
-            is CloseSignal.Plugin -> signal.event.toClosedState()
-            CloseSignal.Host, is CloseSignal.Process -> status.toClosedState()
+            is CloseSignal.Plugin -> Plugin.State.Closed(
+                PluginCloseReason.PluginRequested(signal.event.message, signal.event.stacktrace, status),
+            )
+            is CloseSignal.Host -> Plugin.State.Closed(
+                PluginCloseReason.HostRequested(signal.event.reason, status),
+            )
+            is CloseSignal.Process -> Plugin.State.Closed(PluginCloseReason.ProcessExited(status))
         }
         pluginLifecycleLogger.i { "close watcher exit: plugin=$pluginId, state=${state.value}" }
     }
@@ -82,7 +87,3 @@ internal fun Plugin.enterReady(registry: PluginRegistry, runtime: PluginRuntime)
     return true
 }
 
-private fun PluginClosed.toClosedState(): Plugin.State.Closed {
-    val detail = stacktrace?.takeIf { it.isNotBlank() }?.let { "\n$it" }.orEmpty()
-    return Plugin.State.Closed(IOException("plugin closed unexpectedly: $message$detail"))
-}
