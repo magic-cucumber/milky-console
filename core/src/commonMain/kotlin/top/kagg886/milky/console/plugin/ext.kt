@@ -81,13 +81,17 @@ val Plugin.awaitJob: Job
 
 suspend fun Plugin.send(event: MilkyConsoleFromEvent.FromHost) {
     logger.i { "enter send: plugin=$basePath, state=${state.value}, event=${event::class.simpleName}" }
-    check(state.value is Plugin.State.Ready) {
+    val ready = state.value
+    check(ready is Plugin.State.Ready) {
         logger.e { "send failed: plugin=$basePath is not ready, state=${state.value}" }
         "Plugin's state is not in Ready"
     }
-    EventBus.post(PluginOutboundEvent(manifest.id, event))
-    logger.d { "posted outbound event: plugin=${manifest.id}, type=${event::class.simpleName}, expected=true" }
-    logger.i { "exit send successfully: plugin=${manifest.id}" }
+    // HostClose may transition the plugin to Closing before EventBus.post resumes.
+    // Keep the required Ready-state data instead of reading manifest afterwards.
+    val pluginId = ready.manifest.id
+    EventBus.post(PluginOutboundEvent(pluginId, event))
+    logger.d { "posted outbound event: plugin=$pluginId, type=${event::class.simpleName}, expected=true" }
+    logger.i { "exit send successfully: plugin=$pluginId" }
 }
 
 suspend fun Plugin.nextEvent(): MilkyConsoleFromEvent.FromPlugin {

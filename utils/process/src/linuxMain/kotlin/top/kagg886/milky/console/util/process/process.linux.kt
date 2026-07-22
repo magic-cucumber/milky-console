@@ -34,7 +34,6 @@ actual fun Process.Companion.create(config: ProcessConfig): Process {
                     stdout,
                     stderr,
                 )
-
                 val arguments = listOf(config.executable) + config.arguments
                 val argv = cStringArray(arguments)
                 val environment = cStringArray(mergedEnvironment(config.environment))
@@ -163,14 +162,19 @@ private fun addCloseActionsForUninheritedDescriptors(
         descriptor
     }
     inherited += setOf(STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO)
-
     // The preceding pipe actions consume and close these descriptors.
     val pipeDescriptors = listOfNotNull(stdin, stdout, stderr)
         .flatMap { pipe -> listOf(pipe.source.fd.toInt(), pipe.sink.fd.toInt()) }
-
     openFileDescriptors()
         .asSequence()
-        .filter { it !in inherited && it !in pipeDescriptors }
+        // FD_CLOEXEC already provides the same non-inheritance guarantee without
+        // a child close action. Avoid actions for descriptors another coroutine
+        // can close between this snapshot and posix_spawn.
+        .filter { descriptor ->
+            descriptor !in inherited &&
+                descriptor !in pipeDescriptors &&
+                fcntl(descriptor, F_GETFD).let { flags -> flags >= 0 && flags and FD_CLOEXEC == 0 }
+        }
         .forEach { descriptor ->
             logger.v { "adding close action for uninherited descriptor: descriptor=$descriptor" }
             checkSpawn(
@@ -183,21 +187,14 @@ private fun addCloseActionsForUninheritedDescriptors(
 }
 
 private fun openFileDescriptors(): Set<Int> {
-    logger.v { "enter openFileDescriptors" }
-    val directory = opendir("/proc/self/fd") ?: run {
-        logger.e { "opendir(/proc/self/fd) failed: errno=$errno" }
-        error("opendir(/proc/self/fd) failed: errno $errno")
-    }
+    val directory = opendir("/proc/self/fd") ?: error("opendir(/proc/self/fd) failed: errno $errno")
     return try {
-        val descriptors = buildSet {
+        buildSet {
             while (true) {
                 val entry = readdir(directory) ?: break
                 entry.pointed.d_name.toKString().toIntOrNull()?.let(::add)
             }
         }
-        logger.d { "listed open file descriptors: count=${descriptors.size}, expected=true" }
-        logger.v { "exit openFileDescriptors: count=${descriptors.size}" }
-        descriptors
     } finally {
         closedir(directory)
     }

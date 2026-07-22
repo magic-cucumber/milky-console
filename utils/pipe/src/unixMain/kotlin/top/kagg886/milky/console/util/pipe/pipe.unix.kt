@@ -17,10 +17,14 @@ import okio.Timeout
 import platform.posix.EBADF
 import platform.posix.EINTR
 import platform.posix.EPIPE
+import platform.posix.FD_CLOEXEC
+import platform.posix.F_GETFD
+import platform.posix.F_SETFD
 import platform.posix.SIGPIPE
 import platform.posix.SIG_IGN
 import platform.posix.close
 import platform.posix.errno
+import platform.posix.fcntl
 import platform.posix.pipe
 import platform.posix.read
 import platform.posix.signal
@@ -36,6 +40,16 @@ actual fun IPCAnonymousPipe.Companion.create(): IPCAnonymousPipe = memScoped {
     if (pipe(descriptors) != 0) {
         logger.e { "pipe failed; anonymous pipe not opened: errno=$errno" }
         throw errnoIOException("pipe", errno)
+    }
+    descriptors.forEach { descriptor ->
+        val flags = fcntl(descriptor, F_GETFD)
+        if (flags < 0 || fcntl(descriptor, F_SETFD, flags or FD_CLOEXEC) != 0) {
+            val error = errno
+            close(descriptors[0])
+            close(descriptors[1])
+            logger.e { "failed to set close-on-exec for pipe descriptor=$descriptor, errno=$error" }
+            throw errnoIOException("fcntl(F_SETFD)", error)
+        }
     }
 
     val pipe = UnixIPCPipe(
