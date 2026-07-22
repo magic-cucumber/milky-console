@@ -11,6 +11,7 @@ import okio.Path
 import top.kagg886.milky.console.plugin.config.PluginManifest
 import top.kagg886.milky.console.plugin.lifecycle.PluginInboundEvent
 import top.kagg886.milky.console.plugin.lifecycle.PluginOutboundEvent
+import top.kagg886.milky.console.protocol.HostClose
 import top.kagg886.milky.console.protocol.MilkyConsoleFromEvent
 import top.kagg886.milky.console.util.eventbus.EventBus
 import top.kagg886.milky.console.util.process.Process
@@ -89,6 +90,10 @@ suspend fun Plugin.send(event: MilkyConsoleFromEvent.FromHost) {
     // HostClose may transition the plugin to Closing before EventBus.post resumes.
     // Keep the required Ready-state data instead of reading manifest afterwards.
     val pluginId = ready.manifest.id
+    if (event is HostClose) {
+        // Record the causal shutdown request before EventBus scheduling can race processExit.
+        hostCloseRequest.complete(event)
+    }
     EventBus.post(PluginOutboundEvent(pluginId, event))
     logger.d { "posted outbound event: plugin=$pluginId, type=${event::class.simpleName}, expected=true" }
     logger.i { "exit send successfully: plugin=$pluginId" }

@@ -1,6 +1,7 @@
 package top.kagg886.milky.console.plugin
 
 import co.touchlab.kermit.Logger
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -9,6 +10,7 @@ import kotlinx.serialization.json.JsonObject
 import okio.Path
 import top.kagg886.milky.console.plugin.config.PluginManifest
 import top.kagg886.milky.console.plugin.exception.PluginCloseReason
+import top.kagg886.milky.console.protocol.HostClose
 import top.kagg886.milky.console.util.process.Process
 
 
@@ -22,6 +24,14 @@ class Plugin(val basePath: Path) {
 
     val _state = MutableStateFlow<State>(State.UnInitialized)
     val state: StateFlow<State> = _state.asStateFlow()
+
+    /**
+     * Records a host-initiated shutdown before the loader can observe its resulting process exit.
+     *
+     * This is intentionally separate from EventBus delivery: a loader may exit immediately after
+     * receiving [HostClose], while its EventBus collector has not yet been scheduled.
+     */
+    internal val hostCloseRequest = CompletableDeferred<HostClose>()
 
     val manifestPath by lazy {
         logger.v { "enter manifestPath lazy: basePath=$basePath" }

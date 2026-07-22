@@ -25,33 +25,28 @@ internal fun Plugin.enterReady(registry: PluginRegistry, runtime: PluginRuntime)
     val handshaking = state.value as Plugin.State.Handshaking
     val pluginId = handshaking.manifest.id
 
-    // Register both EventBus listeners synchronously before publishing Ready state.
+    // Register the plugin-side EventBus listener before publishing Ready state.
     val pluginClosed = registry.scope.async(start = CoroutineStart.UNDISPATCHED) {
         logger.v { "enter plugin close listener: plugin=$pluginId" }
         EventBus.subscribe<PluginInboundEvent>()
             .first { it.pluginId == pluginId && it.event is PluginClosed }
             .event as PluginClosed
     }
-    val hostClose = registry.scope.async(start = CoroutineStart.UNDISPATCHED) {
-        logger.v { "enter host close listener: plugin=$pluginId" }
-        EventBus.subscribe<PluginOutboundEvent>()
-            .first { it.pluginId == pluginId && it.event is HostClose }
-            .event as HostClose
-    }
-    logger.d { "close listeners registered: plugin=$pluginId" }
+    logger.d { "close listener registered: plugin=$pluginId" }
 
     val closeAwaitJob = registry.scope.launch(start = CoroutineStart.LAZY) {
         logger.v { "enter close watcher: plugin=$pluginId" }
         val signal = try {
             raceN(
                 { CloseSignal.Plugin(pluginClosed.await()) },
-                { CloseSignal.Host(hostClose.await()) },
+                // Plugin.send records HostClose synchronously, before EventBus delivery and the
+                // loader's resulting exit can race on a platform-specific scheduler.
+                { CloseSignal.Host(hostCloseRequest.await()) },
                 { CloseSignal.Process(runtime.processExit.await()) },
             )
         } finally {
             pluginClosed.cancel()
-            hostClose.cancel()
-            logger.v { "close listeners cancelled: plugin=$pluginId" }
+            logger.v { "close listener cancelled: plugin=$pluginId" }
         }
 
         logger.i { "close signal received: plugin=$pluginId, signal=$signal" }
@@ -87,8 +82,16 @@ internal fun Plugin.enterReady(registry: PluginRegistry, runtime: PluginRuntime)
                 )
             }
             is CloseSignal.Process -> {
-                logger.w { "plugin process exited before explicit close: plugin=$pluginId, status=$status" }
-                Plugin.State.Closed(PluginCloseReason.ProcessExited(status))
+                val hostClose = hostCloseRequest.takeIf { it.isCompleted }?.await()
+                if (hostClose != null) {
+                    logger.i { "host requested plugin close before process exit: plugin=$pluginId, reason=${hostClose.reason}" }
+                    Plugin.State.Closed(
+                        PluginCloseReason.HostRequested(hostClose.reason, status),
+                    )
+                } else {
+                    logger.w { "plugin process exited before explicit close: plugin=$pluginId, status=$status" }
+                    Plugin.State.Closed(PluginCloseReason.ProcessExited(status))
+                }
             }
         }
         logger.i { "close watcher exit: plugin=$pluginId, state=${state.value}" }

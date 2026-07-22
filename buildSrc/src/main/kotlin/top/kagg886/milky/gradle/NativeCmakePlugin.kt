@@ -51,7 +51,7 @@ abstract class NativeCmakeBuild @Inject constructor(
         val osName = System.getProperty("os.name").lowercase()
         return when {
             osName.startsWith("windows") -> listOf(
-                "pwsh", "-NoProfile", "-Command",
+                "powershell.exe", "-NoProfile", "-Command",
                 """
                     cmake -S "${sourceDirectory.absolutePath}" -B "${buildDirectory.absolutePath}" "-DMILKY_CMAKE_OUTPUT_DIR=${pluginOutputDirectory.absolutePath}"
                     if (${ '$' }LASTEXITCODE -ne 0) { exit ${ '$' }LASTEXITCODE }
