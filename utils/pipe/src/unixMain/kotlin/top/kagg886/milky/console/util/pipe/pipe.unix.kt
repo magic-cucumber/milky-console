@@ -9,6 +9,7 @@ import kotlinx.cinterop.addressOf
 import kotlinx.cinterop.allocArray
 import kotlinx.cinterop.get
 import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.pointed
 import kotlinx.cinterop.toKString
 import kotlinx.cinterop.usePinned
 import okio.Buffer
@@ -41,7 +42,7 @@ actual fun IPCAnonymousPipe.Companion.create(): IPCAnonymousPipe = memScoped {
         logger.e { "pipe failed; anonymous pipe not opened: errno=$errno" }
         throw errnoIOException("pipe", errno)
     }
-    descriptors.forEach { descriptor ->
+    listOf(descriptors[0], descriptors[1]).forEach { descriptor ->
         val flags = fcntl(descriptor, F_GETFD)
         if (flags < 0 || fcntl(descriptor, F_SETFD, flags or FD_CLOEXEC) != 0) {
             val error = errno
