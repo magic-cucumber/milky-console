@@ -1,9 +1,13 @@
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.runBlocking
 import co.touchlab.kermit.Logger
 import top.kagg886.milky.console.protocol.PluginApiRequest
 import top.kagg886.milky.console.protocol.PluginApiResponse
+import top.kagg886.milky.console.util.eventbus.LRUCache
 import kotlin.concurrent.atomics.AtomicReference
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
+import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
 
 private val logger = Logger.withTag("PendingApi")
@@ -17,14 +21,11 @@ private val logger = Logger.withTag("PendingApi")
 
 @OptIn(ExperimentalAtomicApi::class)
 object PendingPluginApiRequests {
-    private const val MAX_SIZE = 100
+    /** 挂起的 API 请求超过该时长自动过期，等效于自动取消注册。 */
+    private val REQUEST_TTL = 10.seconds
+    private const val MAX_SIZE = 100L
 
-    private data class Pending(
-        val tag: Uuid,
-        val response: CompletableDeferred<PluginApiResponse>,
-    )
-
-    private val pending = AtomicReference<List<Pending>>(emptyList())
+    private val pending = LRUCache.create<Uuid, CompletableDeferred<PluginApiResponse>>(REQUEST_TTL, MAX_SIZE) { _, _ -> 1L }
     private val sendFailure = AtomicReference<String?>(null)
     private lateinit var sendRequest: (PluginApiRequest) -> Boolean
 
@@ -36,21 +37,12 @@ object PendingPluginApiRequests {
     }
 
     fun register(request: PluginApiRequest): Boolean {
-        logger.i { "enter register: tag=${request.tag}, pending=${pending.load().size}" }
+        logger.i { "enter register: tag=${request.tag}" }
         // wait_message_result may be called immediately after send_message returns,
         // including from a synchronous native lifecycle callback. Register the
         // deferred and enqueue the request without suspending that callback.
-        val entry = Pending(request.tag, CompletableDeferred())
-        while (true) {
-            val current = pending.load()
-            val updated = (current.filterNot { it.tag == request.tag } + entry).takeLast(MAX_SIZE)
-            if (pending.compareAndSet(current, updated)) {
-                logger.d { "registered pending request: tag=${request.tag}, size=${updated.size}" }
-                break
-            } else {
-                logger.v { "pending request registration retried after concurrent update: tag=${request.tag}" }
-            }
-        }
+        runBlocking { pending.put(request.tag, CompletableDeferred()) }
+        logger.d { "registered pending request: tag=${request.tag}" }
         logger.v { "sending pending request to host: tag=${request.tag}" }
         val sent = runCatching { sendRequest(request) }
             .onFailure {
@@ -63,13 +55,13 @@ object PendingPluginApiRequests {
             remove(request.tag)
             return false
         }
-        logger.i { "exit register successfully: tag=${request.tag}, pending=${pending.load().size}" }
+        logger.i { "exit register successfully: tag=${request.tag}" }
         return true
     }
 
-    fun complete(response: PluginApiResponse) {
+    suspend fun complete(response: PluginApiResponse) {
         logger.d { "enter complete: tag=${response.tag}" }
-        val deferred = get(response.tag)
+        val deferred = pending.get(response.tag)
         if (deferred == null) {
             logger.w { "complete received without pending request: tag=${response.tag}" }
         }
@@ -79,7 +71,7 @@ object PendingPluginApiRequests {
 
     fun get(tag: Uuid): CompletableDeferred<PluginApiResponse>? {
         logger.v { "enter get: tag=$tag" }
-        val result = pending.load().firstOrNull { it.tag == tag }?.response
+        val result = pending.getIfAvailable(tag)
         logger.d { "get pending result: tag=$tag, found=${result != null}, expected=${result != null}" }
         logger.v { "exit get: tag=$tag" }
         return result
@@ -95,19 +87,11 @@ object PendingPluginApiRequests {
 
     fun remove(tag: Uuid) {
         logger.d { "enter remove: tag=$tag" }
-        while (true) {
-            val current = pending.load()
-            val updated = current.filterNot { it.tag == tag }
-            if (updated.size == current.size) {
-                logger.v { "remove skipped: tag not pending=$tag" }
-                return
-            }
-            if (pending.compareAndSet(current, updated)) {
-                logger.i { "exit remove successfully: tag=$tag, pending=${updated.size}" }
-                return
-            } else {
-                logger.v { "remove retried after concurrent update: tag=$tag" }
-            }
+        val removed = runBlocking { pending.remove(tag) }
+        if (removed == null) {
+            logger.v { "remove skipped: tag not pending=$tag" }
+        } else {
+            logger.i { "exit remove successfully: tag=$tag" }
         }
     }
 }
